@@ -1,0 +1,63 @@
+name: Deploy
+
+# Deploy to Clever Cloud only after the CI workflow succeeds on main.
+#
+# The CI jobs (lint, test, build) live in ci.yml. Because `needs:` can only
+# reference jobs in the same workflow, we gate deployment on the CI workflow
+# completing successfully using the `workflow_run` trigger. The guard in the
+# job's `if:` ensures we only deploy when:
+#   - the triggering CI run concluded with `success`, AND
+#   - the branch was `main`.
+#
+# ---------------------------------------------------------------------------
+# Required GitHub repository secrets (set these once via the gh CLI):
+#
+#   gh secret set CLEVER_TOKEN
+#   gh secret set CLEVER_SECRET
+#
+# Get the values by running `clever login` locally, then reading
+# ~/.config/clever-cloud/clever-tools.json (token + secret fields).
+# NEVER commit these values — they are stored as encrypted repo secrets.
+# ---------------------------------------------------------------------------
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  # Allow manual redeploys from the Actions tab.
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Clever Cloud
+    runs-on: ubuntu-latest
+    # Only deploy when CI passed on main (or on a manual dispatch).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Clever Cloud deploys via git; fetch full history for a clean push.
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install clever-tools
+        run: npm install -g clever-tools
+
+      - name: Deploy
+        env:
+          CLEVER_TOKEN: ${{ secrets.CLEVER_TOKEN }}
+          CLEVER_SECRET: ${{ secrets.CLEVER_SECRET }}
+        run: clever deploy

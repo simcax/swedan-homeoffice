@@ -1,0 +1,130 @@
+name: CI
+
+# Runs lint, tests, and a package build on every push and pull request to main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pin the uv version used by setup-uv for reproducible builds.
+  UV_CACHE_DIR: /tmp/.uv-cache
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python (from .python-version)
+        run: uv python install
+
+      - name: Cache virtualenv and uv download cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ${{ env.UV_CACHE_DIR }}
+          key: uv-${{ runner.os }}-lint-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-lint-
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Ruff check
+        run: uv run ruff check .
+
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-latest
+
+    # PostgreSQL service container for integration tests.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        # Wait until the database is ready before starting the job steps.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Standard postgresql:// URL — the app rewrites it to postgresql+asyncpg:// internally.
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python (from .python-version)
+        run: uv python install
+
+      - name: Cache virtualenv and uv download cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ${{ env.UV_CACHE_DIR }}
+          key: uv-${{ runner.os }}-test-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-test-
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run pytest -v --tb=short
+
+  build:
+    name: Build (uv build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python (from .python-version)
+        run: uv python install
+
+      - name: Cache virtualenv and uv download cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .venv
+            ${{ env.UV_CACHE_DIR }}
+          key: uv-${{ runner.os }}-build-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            uv-${{ runner.os }}-build-
+
+      - name: Build packages
+        run: uv build
