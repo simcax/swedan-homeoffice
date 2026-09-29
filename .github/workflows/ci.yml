@@ -127,4 +127,6 @@ jobs:
             uv-${{ runner.os }}-build-
 
       - name: Build packages
-        run: uv build
+        # The repo root is a uv workspace (no buildable project of its own).
+        # Build every workspace member (backend + app) explicitly.
+        run: uv build --all-packages
