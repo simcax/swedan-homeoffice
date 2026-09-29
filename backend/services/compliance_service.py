@@ -23,7 +23,12 @@ _COMPLIANCE_THRESHOLD = 50.0
 class ComplianceService:
     """Pure-function service for computing compliance summaries."""
 
-    def calculate_monthly(self, entries: list[WorkEntry]) -> ComplianceSummary:
+    def calculate_monthly(
+        self,
+        entries: list[WorkEntry],
+        year: int | None = None,
+        month: int | None = None,
+    ) -> ComplianceSummary:
         """Compute a :class:`ComplianceSummary` for a single period.
 
         Follows the ``calculate_compliance`` pseudocode: count locations with a
@@ -31,9 +36,12 @@ class ComplianceService:
         ``denmark + vacation + sick + home == entries_processed`` and derive the
         compliance percentage.
 
-        ``compliance_pct`` is ``0.0`` when there are no entries. ``year`` and
-        ``month`` are derived from the first entry when present, otherwise ``0``
-        (:meth:`calculate_annual` overrides them per breakdown item).
+        ``compliance_pct`` is ``0.0`` when there are no entries. The summary's
+        ``year``/``month`` labels come from the explicit ``year``/``month``
+        arguments when supplied — which is what callers should do so the
+        requested period is preserved even for empty results. When an argument
+        is ``None`` the value is inferred from the first entry, falling back to
+        ``0`` only when there are no entries and no explicit value.
         """
         total = len(entries)
         denmark = 0
@@ -55,8 +63,11 @@ class ComplianceService:
         compliant = denmark + vacation + sick
         pct = (compliant / total) * 100.0 if total > 0 else 0.0
 
-        year = entries[0].work_date.year if entries else 0
-        month = entries[0].work_date.month if entries else 0
+        # Explicit period labels win; otherwise infer from entries, then 0.
+        if year is None:
+            year = entries[0].work_date.year if entries else 0
+        if month is None:
+            month = entries[0].work_date.month if entries else 0
 
         return ComplianceSummary(
             year=year,
@@ -70,7 +81,9 @@ class ComplianceService:
             is_compliant=pct >= _COMPLIANCE_THRESHOLD,
         )
 
-    def calculate_annual(self, entries: list[WorkEntry]) -> AnnualSummary:
+    def calculate_annual(
+        self, entries: list[WorkEntry], year: int | None = None
+    ) -> AnnualSummary:
         """Compute an :class:`AnnualSummary` with a 12-month breakdown.
 
         Groups entries by calendar month, produces exactly 12
@@ -78,8 +91,15 @@ class ComplianceService:
         ``total_days == 0``), then rolls the per-month totals up into the annual
         summary. Annual ``compliance_pct`` is rounded to 2 decimal places
         (requirement 7.4).
+
+        The requested ``year`` is preserved on the annual summary and on every
+        monthly breakdown item — including empty months and years with no
+        entries at all. Callers should pass ``year`` explicitly; when it is
+        ``None`` the value is inferred from the first entry, falling back to
+        ``0`` only for an empty input with no explicit year.
         """
-        year = entries[0].work_date.year if entries else 0
+        if year is None:
+            year = entries[0].work_date.year if entries else 0
 
         # Group entries by month (1–12).
         monthly_map: dict[int, list[WorkEntry]] = defaultdict(list)
@@ -88,10 +108,11 @@ class ComplianceService:
 
         monthly_breakdown: list[ComplianceSummary] = []
         for month in range(1, 13):
-            summary = self.calculate_monthly(monthly_map.get(month, []))
-            # Force year/month so empty months carry correct labels.
-            summary.year = year
-            summary.month = month
+            # Pass the period labels explicitly so empty months are labeled
+            # with the requested year/month rather than 0.
+            summary = self.calculate_monthly(
+                monthly_map.get(month, []), year=year, month=month
+            )
             monthly_breakdown.append(summary)
 
         total = sum(s.total_days for s in monthly_breakdown)

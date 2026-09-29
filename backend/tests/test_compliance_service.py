@@ -61,6 +61,18 @@ class TestCalculateMonthly:
         assert result.compliance_pct == 50.0
         assert result.is_compliant is True
 
+    def test_empty_list_preserves_requested_year_and_month(self) -> None:
+        # Regression for #2: an empty period must keep the requested labels
+        # instead of defaulting to year/month 0.
+        svc = ComplianceService()
+
+        result = svc.calculate_monthly([], year=2025, month=3)
+
+        assert result.year == 2025
+        assert result.month == 3
+        assert result.total_days == 0
+        assert result.is_compliant is False
+
     def test_only_home_entries_is_not_compliant(self) -> None:
         svc = ComplianceService()
         entries = [
@@ -157,6 +169,37 @@ class TestCalculateAnnual:
         # Months 2 through 11 have no entries.
         for month in range(2, 12):
             assert by_month[month].total_days == 0
+
+    def test_empty_year_preserves_requested_year_on_summary_and_breakdown(
+        self,
+    ) -> None:
+        # Regression for #2: a year with no entries must retain the requested
+        # year on the annual summary and on all 12 monthly breakdown items.
+        svc = ComplianceService()
+
+        result = svc.calculate_annual([], year=2025)
+
+        assert result.year == 2025
+        assert len(result.monthly_breakdown) == 12
+        for month, summary in enumerate(result.monthly_breakdown, start=1):
+            assert summary.year == 2025
+            assert summary.month == month
+            assert summary.total_days == 0
+
+    def test_populated_year_labels_empty_months_with_requested_year(self) -> None:
+        # Regression for #2: even when some months have entries, empty months
+        # must be labeled with the requested year (not inferred/0).
+        svc = ComplianceService()
+        entries = [
+            _entry(date(2025, 1, 10), "denmark"),
+            _entry(date(2025, 12, 31), "home"),
+        ]
+
+        result = svc.calculate_annual(entries, year=2025)
+
+        for month, summary in enumerate(result.monthly_breakdown, start=1):
+            assert summary.year == 2025
+            assert summary.month == month
 
     def test_annual_rollup_totals_equal_sum_of_monthly_breakdown(self) -> None:
         svc = ComplianceService()
