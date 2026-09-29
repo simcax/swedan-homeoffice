@@ -1,2 +1,8 @@
 [tool.uv.workspace]
 members = ["backend", "app"]
+
+[tool.pytest.ini_options]
+# Pytest is invoked from the repo root in CI, so the asyncio configuration must
+# live here (the root config file) rather than in a workspace member's
+# pyproject.toml, which pytest ignores when run from the root.
+asyncio_mode = "auto"

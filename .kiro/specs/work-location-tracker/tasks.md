@@ -70,8 +70,8 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
   - Add a `README.md` badge for the CI workflow status
   - _Requirements: 11.2, 11.3, 11.4, 11.5_
 
-- [ ] 3. Implement `EntryRepository`
-  - [ ] 3.1 Write failing tests for `EntryRepository` in `backend/tests/test_entry_repository.py` (TDD red phase)
+- [x] 3. Implement `EntryRepository`
+  - [x] 3.1 Write failing tests for `EntryRepository` in `backend/tests/test_entry_repository.py` (TDD red phase)
     - Use `pytest-asyncio` with a test `AsyncSession` fixture backed by a real PostgreSQL test database (or in-memory SQLite via `aiosqlite` for speed); roll back after each test
     - Test `get_by_date` returns `None` when no entry exists
     - Test `create` inserts a row and returns the entry with correct `work_date` and `location`
@@ -81,20 +81,20 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Test `get_by_year` returns all entries for the year across all months
     - _Requirements: 3.2, 4.2, 4.3, 5.2, 10.1, 10.2_
 
-  - [ ] 3.2 Implement `EntryRepository` in `backend/repository.py` to pass the tests (TDD green phase)
+  - [x] 3.2 Implement `EntryRepository` in `backend/repository.py` to pass the tests (TDD green phase)
     - Implement `get_by_date`, `get_by_month`, `get_by_year`, `create`, `update`, `delete` using async SQLAlchemy queries
     - `get_by_month` must ORDER BY `work_date ASC`
     - `delete` raises `404`-style exception when `entry_id` not found
     - `update` raises `404`-style exception when `entry_id` not found
     - _Requirements: 3.2, 4.2, 4.3, 4.4, 5.2, 10.1_
 
-  - [ ]* 3.3 Write property test for entry ordering (Property 6)
+  - [x] 3.3 Write property test for entry ordering (Property 6)
     - **Property 6: Entry List Ordering**
     - Generate a shuffled list of distinct dates within a month, insert them in random order, assert `get_by_month` always returns them sorted ascending
     - **Validates: Requirements 5.2**
 
-- [ ] 4. Implement `ComplianceService`
-  - [ ] 4.1 Write failing tests for `ComplianceService` in `backend/tests/test_compliance_service.py` (TDD red phase)
+- [x] 4. Implement `ComplianceService`
+  - [x] 4.1 Write failing tests for `ComplianceService` in `backend/tests/test_compliance_service.py` (TDD red phase)
     - Test `calculate_monthly` with empty list returns `total_days=0`, `compliance_pct=0.0`, `is_compliant=False`
     - Test with 2 entries (1 denmark, 1 home) returns `compliance_pct=50.0`, `is_compliant=True`
     - Test with only home entries returns `is_compliant=False`
@@ -104,34 +104,34 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Test annual rollup totals equal sum of monthly breakdown fields
     - _Requirements: 6.3, 6.4, 6.5, 6.6, 7.2, 7.3, 7.4, 7.5, 13.3, 14.3_
 
-  - [ ] 4.2 Implement `ComplianceService` in `backend/services/compliance_service.py` to pass tests (TDD green phase)
+  - [x] 4.2 Implement `ComplianceService` in `backend/services/compliance_service.py` to pass tests (TDD green phase)
     - Implement `calculate_monthly` following the Pascal pseudocode in design (loop invariant counting)
     - Implement `calculate_annual` grouping by month, computing per-month summaries, then rolling up
     - `compliance_pct` formula: `((denmark_days + vacation_days + sick_days) / total_days) * 100.0`
     - `is_compliant` iff `compliance_pct >= 50.0`
     - _Requirements: 6.3, 6.4, 6.5, 6.6, 7.2, 7.3, 7.4, 7.5_
 
-  - [ ]* 4.3 Write property test for compliance partition (Property 3)
+  - [x] 4.3 Write property test for compliance partition (Property 3)
     - **Property 3: Compliance Partition**
     - Generate arbitrary non-negative counts for each location type; build entry list; assert `denmark_days + vacation_days + sick_days + home_days == total_days == len(entries)`
     - **Validates: Requirements 6.6, 7.3**
 
-  - [ ]* 4.4 Write property test for compliance percentage formula (Property 4)
+  - [x] 4.4 Write property test for compliance percentage formula (Property 4)
     - **Property 4: Compliance Percentage Formula**
     - For any non-empty entry list assert `compliance_pct == ((denmark + vacation + sick) / total) * 100.0`; for empty list assert `compliance_pct == 0.0` and `is_compliant == False`
     - **Validates: Requirements 6.3, 6.4**
 
-  - [ ]* 4.5 Write property test for compliance threshold (Property 5)
+  - [x] 4.5 Write property test for compliance threshold (Property 5)
     - **Property 5: Compliance Threshold**
     - For any arbitrary entry list assert `is_compliant == (compliance_pct >= 50.0)`
     - **Validates: Requirements 6.5**
 
-  - [ ]* 4.6 Write property test for vacation/sick compliance equivalence (Property 11)
+  - [x] 4.6 Write property test for vacation/sick compliance equivalence (Property 11)
     - **Property 11: Vacation/Sick Compliance Equivalence**
     - Generate entry list; replace each vacation/sick entry with a denmark entry; assert `compliance_pct` and `is_compliant` are unchanged
     - **Validates: Requirements 6.3, 6.4, 13.3, 14.3**
 
-  - [ ]* 4.7 Write property test for annual breakdown completeness (Property 7)
+  - [x] 4.7 Write property test for annual breakdown completeness (Property 7)
     - **Property 7: Annual Breakdown Completeness**
     - For any arbitrary set of entries across a year assert `len(monthly_breakdown) == 12` and months with no entries have `total_days == 0`
     - **Validates: Requirements 7.2, 7.5**
