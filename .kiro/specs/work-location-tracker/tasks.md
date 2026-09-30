@@ -142,7 +142,7 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - **Validates: Requirements 7.3, 7.4**
 
 - [ ] 5. Implement `EntryService`
-  - [ ] 5.1 Write failing tests for `EntryService` in `backend/tests/test_entry_service.py` (TDD red phase)
+  - [x] 5.1 Write failing tests for `EntryService` in `backend/tests/test_entry_service.py` (TDD red phase)
     - Mock `EntryRepository`; test `upsert_entry` calls `repo.update` when `get_by_date` returns an existing entry
     - Test `upsert_entry` calls `repo.create` when `get_by_date` returns `None`
     - Test returned entry has correct `work_date` and `location` in both paths
@@ -150,22 +150,22 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Test `get_entries_for_month` delegates to `repo.get_by_month`
     - _Requirements: 1.2, 1.3, 4.2_
 
-  - [ ] 5.2 Implement `EntryService` in `backend/services/entry_service.py` to pass tests (TDD green phase)
+  - [x] 5.2 Implement `EntryService` in `backend/services/entry_service.py` to pass tests (TDD green phase)
     - Implement `upsert_entry` following the upsert pseudocode in design
     - Implement `get_entries_for_month` and `delete_entry` as thin delegation methods
     - _Requirements: 1.2, 1.3, 4.2_
 
-  - [ ]* 5.3 Write property test for upsert uniqueness (Property 1)
+  - [ ] 5.3 Write property test for upsert uniqueness (Property 1)
     - **Property 1: Upsert Uniqueness**
     - Generate arbitrary `(work_date, location)` pairs; call `upsert_entry` one or more times for the same date; assert exactly one DB row exists for that date and its location matches the last call
     - **Validates: Requirements 1.2, 1.3, 1.5**
 
-  - [ ]* 5.4 Write property test for PATCH updates location (Property 10)
+  - [ ] 5.4 Write property test for PATCH updates location (Property 10)
     - **Property 10: PATCH Updates Location**
     - For any existing entry and any valid `WorkLocation`, call `update_entry`; assert returned entry has the new location and unchanged `work_date`
     - **Validates: Requirements 3.2**
 
-  - [ ]* 5.5 Write property test for delete removes entry (Property 9)
+  - [ ] 5.5 Write property test for delete removes entry (Property 9)
     - **Property 9: Delete Removes Entry**
     - For any existing entry call `delete_entry`; assert `get_by_date` returns `None` and row count for that date is zero
     - **Validates: Requirements 4.2**

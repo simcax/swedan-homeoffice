@@ -1,11 +1,12 @@
 name: CI
 
-# Runs lint, tests, and a package build on every push and pull request to main.
+# Runs lint, tests, and a package build on every push to main and on every pull
+# request, regardless of the target branch. Running on all PRs (including
+# stacked feature-branch PRs) ensures nothing merges without passing CI.
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
