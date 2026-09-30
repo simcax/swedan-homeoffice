@@ -1,9 +1,9 @@
-"""Failing integration tests for the summary router (TDD red phase — task 7.2).
+"""Integration tests for the summary router (``backend.routers.summary``).
 
-These tests describe the behaviour of the yet-to-be-implemented FastAPI
-summary router (``backend.routers.summary``) mounted on the app factory
-(``backend.main``). They are expected to FAIL at import time (neither module
-exists yet) until tasks 7.4 and 7.5 implement them.
+Exercises the FastAPI summary router mounted on the app factory
+(``backend.main``) end-to-end: ``GET /api/v1/summary/monthly`` and
+``GET /api/v1/summary/annual``, including field/count correctness, the
+empty-month case, and out-of-range parameter validation.
 
 The router interface under test (from the design document)::
 
@@ -23,9 +23,17 @@ fixture conventions in ``conftest.py``).
 Requirements: 6.1, 6.2, 6.3, 6.5, 7.1, 7.2, 7.5, 7.6
 """
 
+import os
 from collections.abc import AsyncGenerator
 from datetime import date
-import os
+
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+# ``backend.database`` aborts at import time when ``DATABASE_URL`` is missing.
+# Set a throwaway value BEFORE importing it so collection is order-independent
+# and this module can run in isolation (tests never connect to it — the
+# ``get_session`` dependency is overridden with an in-memory SQLite session).
+os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
 
 import pytest
 import pytest_asyncio
@@ -36,13 +44,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
-
 from backend.database import get_session
 from backend.main import app
 from backend.models import Base, WorkEntry
-
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest_asyncio.fixture

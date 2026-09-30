@@ -29,6 +29,7 @@ See :func:`_lifespan` for the guarding rationale.
 Requirements: 11.2, 11.3, 11.4, 11.5
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -107,7 +108,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "to a valid PostgreSQL connection string and try again."
             )
             raise RuntimeError("Missing required environment variable DATABASE_URL.")
-        _run_migrations()
+        # ``_run_migrations`` is synchronous and Alembic's online env
+        # (``backend/alembic/env.py``) drives the async engine via
+        # ``asyncio.run(...)``. Calling it directly here would raise
+        # ``RuntimeError: asyncio.run() cannot be called from a running event
+        # loop`` because the lifespan already runs inside the ASGI loop. Run it
+        # in a worker thread so Alembic gets its own event loop.
+        await asyncio.to_thread(_run_migrations)
 
     yield
 
@@ -120,8 +127,9 @@ def create_app(run_migrations: bool | None = None) -> FastAPI:
             and run Alembic ``upgrade head`` on startup. When ``None`` (the
             default used by tests, which call ``create_app()`` with no args),
             the behaviour is taken from the ``RUN_MIGRATIONS`` environment
-            variable — off unless explicitly enabled. Production sets
-            ``RUN_MIGRATIONS=1`` so the schema is migrated before serving.
+            variable — off unless explicitly enabled. The module-level
+            production ``app`` passes ``run_migrations=True`` explicitly so the
+            schema is migrated before serving regardless of that flag.
 
     Returns:
         A configured app with the entries and summary routers mounted and CORS
@@ -162,4 +170,11 @@ def create_app(run_migrations: bool | None = None) -> FastAPI:
 # Module-level ASGI app. Started in production via CC_PYTHON_UV_RUN_COMMAND
 # (uvicorn backend.main:app --host 0.0.0.0 --port 8080) and imported directly
 # by test_summary_router.py.
+#
+# Migrations are enabled explicitly rather than relying on the RUN_MIGRATIONS
+# env flag: the documented Clever Cloud configuration does not set it, and this
+# production instance must always validate DATABASE_URL and run
+# ``alembic upgrade head`` before serving (Requirements 11.2, 11.4, 11.5).
+# Tests build their own apps via ``create_app()`` (migrations off by default),
+# so they are unaffected.
 app = create_app(run_migrations=True)
