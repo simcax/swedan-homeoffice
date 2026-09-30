@@ -23,17 +23,8 @@ fixture conventions in ``conftest.py``).
 Requirements: 6.1, 6.2, 6.3, 6.5, 7.1, 7.2, 7.5, 7.6
 """
 
-import os
 from collections.abc import AsyncGenerator
 from datetime import date
-
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
-# ``backend.database`` aborts at import time when ``DATABASE_URL`` is missing.
-# Set a throwaway value BEFORE importing it so collection is order-independent
-# and this module can run in isolation (tests never connect to it — the
-# ``get_session`` dependency is overridden with an in-memory SQLite session).
-os.environ.setdefault("DATABASE_URL", TEST_DATABASE_URL)
 
 import pytest
 import pytest_asyncio
@@ -47,6 +38,12 @@ from sqlalchemy.ext.asyncio import (
 from backend.database import get_session
 from backend.main import app
 from backend.models import Base, WorkEntry
+
+# ``backend.database`` now initializes its engine lazily, so importing it (and
+# ``backend.main``) never requires ``DATABASE_URL``. Tests override
+# ``get_session`` with the in-memory SQLite session below and never touch the
+# real engine.
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest_asyncio.fixture

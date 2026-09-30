@@ -7,23 +7,17 @@ This module exposes two things the rest of the system depends on:
 * ``app`` — a module-level :class:`FastAPI` instance created via
   :func:`create_app`. This is the ASGI target Clever Cloud starts with
   ``CC_PYTHON_UV_RUN_COMMAND`` (``uvicorn backend.main:app --host 0.0.0.0
-  --port 8080``) and the object ``test_summary_router.py`` imports directly.
+  --port 8080``).
 
 Import-time safety
 ------------------
-``backend.database`` aborts with ``SystemExit`` at *import* time when
-``DATABASE_URL`` is absent (see that module). The router modules import
-``backend.database``, so importing ``backend.main`` would transitively trip
-that guard. ``test_summary_router.py`` imports ``app`` *without* setting
-``DATABASE_URL``, so we install a harmless placeholder here — before importing
-the routers — purely to satisfy the import-time guard. This mirrors the
-``os.environ.setdefault`` the entries-router test performs. The placeholder is
-never connected to: tests override ``get_session`` and production always
-injects a real ``DATABASE_URL`` (from the Clever Cloud PostgreSQL add-on),
-which takes precedence over ``setdefault``.
+``backend.database`` initializes its engine and session factory *lazily* (on
+the first ``get_session`` call), so importing it — and therefore importing this
+module and the routers — never requires ``DATABASE_URL`` and has no side
+effects. The real environment is validated in the FastAPI *lifespan*, where a
+missing ``DATABASE_URL`` aborts startup and Alembic migrations run before any
+request is served — never at import, and never during tests.
 
-Startup behaviour (the FastAPI *lifespan*) is where the real environment is
-validated and Alembic migrations run — never at import, and never during tests.
 See :func:`_lifespan` for the guarding rationale.
 
 Requirements: 11.2, 11.3, 11.4, 11.5
@@ -35,18 +29,10 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-# ---------------------------------------------------------------------------
-# Import-time guard shim (see module docstring). Must run BEFORE importing the
-# routers, which transitively import ``backend.database``. A real DATABASE_URL
-# in the environment (production / CI) is left untouched by ``setdefault``.
-# ---------------------------------------------------------------------------
-os.environ.setdefault(
-    "DATABASE_URL", "postgresql://placeholder@localhost:5432/placeholder"
-)
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.database import get_engine
 from backend.routers import entries, summary
 
 logger = logging.getLogger(__name__)
@@ -57,8 +43,13 @@ def _run_migrations() -> None:
 
     Runs the same ``alembic upgrade head`` that ``CC_POST_BUILD_HOOK`` would,
     but from inside the process so requests are only accepted once the schema
-    is current. On failure the exception is logged with the offending revision
-    context and re-raised so startup aborts (Requirement 11.5).
+    is current. On failure the exception is logged and re-raised so startup
+    aborts (Requirement 11.5).
+
+    Note on logging: Alembic's ``env.py`` calls ``fileConfig`` with
+    ``disable_existing_loggers=False`` (see ``backend/alembic/env.py``), so this
+    module's logger survives the migration environment's logging setup and the
+    failure message below is always emitted (Requirement 11.5).
     """
     from pathlib import Path
 
@@ -87,27 +78,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     On startup, when migrations are enabled (production / real runs):
 
     * Abort if ``DATABASE_URL`` is absent, logging a clear message
-      (Requirement 11.2).
+      (Requirement 11.2). This is checked by initializing the database engine,
+      which raises :class:`DatabaseConfigError` when the variable is missing.
     * Run Alembic ``upgrade head`` before accepting requests
       (Requirement 11.4); abort on failure (Requirement 11.5).
 
     Migrations are gated behind ``app.state.run_migrations`` (set by
-    :func:`create_app`, defaulting to the ``RUN_MIGRATIONS`` env flag). Tests
-    construct the app with the flag off, so they never run real Alembic against
-    the in-memory SQLite database they wire in via ``get_session`` overrides.
+    :func:`create_app`). Tests construct the app with the flag off, so they
+    never run real Alembic against the in-memory SQLite database they wire in
+    via ``get_session`` overrides.
     """
     if getattr(app.state, "run_migrations", False):
-        # Read the *real* environment here — not the import-time placeholder —
-        # so a genuinely missing DATABASE_URL is caught at startup.
-        database_url = os.environ.get("DATABASE_URL", "").strip()
-        placeholder = "postgresql://placeholder@localhost:5432/placeholder"
-        if not database_url or database_url == placeholder:
-            logger.critical(
-                "DATABASE_URL environment variable is not set. The backend "
-                "cannot start without a database connection. Set DATABASE_URL "
-                "to a valid PostgreSQL connection string and try again."
-            )
-            raise RuntimeError("Missing required environment variable DATABASE_URL.")
+        # Initializing the engine loads and validates DATABASE_URL from the
+        # environment; a missing value raises DatabaseConfigError (already
+        # logged clearly by backend.database). Requirement 11.2.
+        get_engine()
         # ``_run_migrations`` is synchronous and Alembic's online env
         # (``backend/alembic/env.py``) drives the async engine via
         # ``asyncio.run(...)``. Calling it directly here would raise
@@ -168,8 +153,7 @@ def create_app(run_migrations: bool | None = None) -> FastAPI:
 
 
 # Module-level ASGI app. Started in production via CC_PYTHON_UV_RUN_COMMAND
-# (uvicorn backend.main:app --host 0.0.0.0 --port 8080) and imported directly
-# by test_summary_router.py.
+# (uvicorn backend.main:app --host 0.0.0.0 --port 8080).
 #
 # Migrations are enabled explicitly rather than relying on the RUN_MIGRATIONS
 # env flag: the documented Clever Cloud configuration does not set it, and this
