@@ -25,7 +25,13 @@ class _DatabaseSettings(BaseSettings):
         """Rewrite postgresql:// to postgresql+asyncpg:// for the async driver."""
         return v.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        # Ignore unrelated keys in the local .env (e.g. GITHUB_TOKEN); only
+        # DATABASE_URL is consumed. CI/production inject DATABASE_URL directly.
+        "extra": "ignore",
+    }
 
 
 try:
