@@ -25,6 +25,7 @@ Requirements: 6.1, 6.2, 6.3, 6.5, 7.1, 7.2, 7.5, 7.6
 
 from collections.abc import AsyncGenerator
 from datetime import date
+import os
 
 import pytest
 import pytest_asyncio
@@ -34,6 +35,8 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+
+os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
 
 from backend.database import get_session
 from backend.main import app
