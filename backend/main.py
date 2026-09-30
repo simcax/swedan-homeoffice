@@ -162,4 +162,4 @@ def create_app(run_migrations: bool | None = None) -> FastAPI:
 # Module-level ASGI app. Started in production via CC_PYTHON_UV_RUN_COMMAND
 # (uvicorn backend.main:app --host 0.0.0.0 --port 8080) and imported directly
 # by test_summary_router.py.
-app = create_app()
+app = create_app(run_migrations=True)
