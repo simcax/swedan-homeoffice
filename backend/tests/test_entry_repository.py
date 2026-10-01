@@ -23,8 +23,22 @@ from datetime import date
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.models import WorkEntry
 from backend.repository import EntryRepository
 from backend.schemas import WorkEntryCreate, WorkLocation
+
+
+async def _insert(
+    session: AsyncSession, work_date: date, location: WorkLocation
+) -> None:
+    """Insert a ``WorkEntry`` row directly, bypassing schema validation.
+
+    The ``WorkEntryCreate`` schema rejects future dates, so boundary tests that
+    need far-future years (e.g. 9999) add the ORM row directly instead.
+    """
+    session.add(WorkEntry(work_date=work_date, location=location.value))
+    await session.commit()
+
 
 # ---------------------------------------------------------------------------
 # get_by_date
@@ -249,6 +263,51 @@ class TestGetByYear:
         result = await repo.get_by_year(2025)
 
         assert [e.work_date for e in result] == [date(2025, 3, 1)]
+
+
+# ---------------------------------------------------------------------------
+# Terminal date-boundary handling (years at/near date.max — no ValueError)
+# ---------------------------------------------------------------------------
+
+
+class TestTerminalDateBoundary:
+    async def test_get_by_month_december_9999_does_not_raise_and_includes_last_day(
+        self, async_session: AsyncSession
+    ) -> None:
+        # "First day of next month" for Dec 9999 would overflow date; the
+        # repository must clamp instead of raising, and still return Dec 31 9999.
+        repo = EntryRepository(async_session)
+        await _insert(async_session, date(9999, 12, 31), WorkLocation.HOME)
+
+        result = await repo.get_by_month(9999, 12)
+
+        assert [e.work_date for e in result] == [date(9999, 12, 31)]
+
+    async def test_get_by_year_9999_does_not_raise_and_includes_last_day(
+        self, async_session: AsyncSession
+    ) -> None:
+        # "First day of next year" for 9999 would overflow date; same clamp.
+        repo = EntryRepository(async_session)
+        await _insert(async_session, date(9999, 1, 1), WorkLocation.DENMARK)
+        await _insert(async_session, date(9999, 12, 31), WorkLocation.SICK)
+
+        result = await repo.get_by_year(9999)
+
+        assert [e.work_date for e in result] == [
+            date(9999, 1, 1),
+            date(9999, 12, 31),
+        ]
+
+    async def test_get_by_month_after_2099_returns_entries(
+        self, async_session: AsyncSession
+    ) -> None:
+        # Years beyond the summary-only 2099 cap are valid for entries (Req 5.2).
+        repo = EntryRepository(async_session)
+        await _insert(async_session, date(2100, 6, 15), WorkLocation.VACATION)
+
+        result = await repo.get_by_month(2100, 6)
+
+        assert [e.work_date for e in result] == [date(2100, 6, 15)]
 
 
 if __name__ == "__main__":  # pragma: no cover
