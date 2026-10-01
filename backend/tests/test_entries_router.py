@@ -148,6 +148,13 @@ class TestListEntries:
         assert response.status_code == 200
         assert response.json() == []
 
+    async def test_year_beyond_date_range_returns_empty_list(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.get(API, params={"year": 10000, "month": 6})
+        assert response.status_code == 200
+        assert response.json() == []
+
     async def test_terminal_year_boundary_does_not_500(
         self, client: AsyncClient
     ) -> None:
