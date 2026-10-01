@@ -141,8 +141,8 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Assert annual `total_days`, `denmark_days`, `vacation_days`, `sick_days`, `home_days` equal sums over `monthly_breakdown`
     - **Validates: Requirements 7.3, 7.4**
 
-- [ ] 5. Implement `EntryService`
-  - [ ] 5.1 Write failing tests for `EntryService` in `backend/tests/test_entry_service.py` (TDD red phase)
+- [x] 5. Implement `EntryService`
+  - [x] 5.1 Write failing tests for `EntryService` in `backend/tests/test_entry_service.py` (TDD red phase)
     - Mock `EntryRepository`; test `upsert_entry` calls `repo.update` when `get_by_date` returns an existing entry
     - Test `upsert_entry` calls `repo.create` when `get_by_date` returns `None`
     - Test returned entry has correct `work_date` and `location` in both paths
@@ -150,7 +150,7 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Test `get_entries_for_month` delegates to `repo.get_by_month`
     - _Requirements: 1.2, 1.3, 4.2_
 
-  - [ ] 5.2 Implement `EntryService` in `backend/services/entry_service.py` to pass tests (TDD green phase)
+  - [x] 5.2 Implement `EntryService` in `backend/services/entry_service.py` to pass tests (TDD green phase)
     - Implement `upsert_entry` following the upsert pseudocode in design
     - Implement `get_entries_for_month` and `delete_entry` as thin delegation methods
     - _Requirements: 1.2, 1.3, 4.2_
@@ -170,13 +170,13 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - For any existing entry call `delete_entry`; assert `get_by_date` returns `None` and row count for that date is zero
     - **Validates: Requirements 4.2**
 
-- [ ] 6. Checkpoint — backend services
+- [x] 6. Checkpoint — backend services
   - Ensure all backend unit and property tests pass: `uv run pytest backend/tests/ -v`
   - Fix any ruff lint issues: `uv run ruff check backend/ && uv run ruff format backend/`
   - Ask the user if any questions arise before proceeding to routers.
 
-- [ ] 7. Implement FastAPI routers and app factory
-  - [ ] 7.1 Write failing integration tests for the entries router in `backend/tests/test_entries_router.py` (TDD red phase)
+- [x] 7. Implement FastAPI routers and app factory
+  - [x] 7.1 Write failing integration tests for the entries router in `backend/tests/test_entries_router.py` (TDD red phase)
     - Use `httpx.AsyncClient` with `ASGITransport` and a test `AsyncSession` that rolls back per test
     - Test `POST /api/v1/entries` with valid body returns 201 and correct JSON
     - Test `POST /api/v1/entries` with future date returns 422
@@ -189,7 +189,7 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Test `GET /api/v1/entries` with month < 1 or > 12, or year < 2000 returns 422
     - _Requirements: 1.1, 1.2, 1.6, 2.1, 3.1, 3.2, 3.3, 3.4, 4.2, 4.3, 4.4, 5.1, 5.2, 5.4_
 
-  - [ ] 7.2 Write failing integration tests for the summary router in `backend/tests/test_summary_router.py` (TDD red phase)
+  - [x] 7.2 Write failing integration tests for the summary router in `backend/tests/test_summary_router.py` (TDD red phase)
     - Test `GET /api/v1/summary/monthly?year=&month=` returns all required fields with correct counts
     - Test `GET /api/v1/summary/monthly` with out-of-range year/month returns 422
     - Test `GET /api/v1/summary/monthly` with no entries returns `total_days=0`, `compliance_pct=0.0`, `is_compliant=false`
@@ -197,20 +197,20 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Test `GET /api/v1/summary/annual` with invalid year returns 422
     - _Requirements: 6.1, 6.2, 6.3, 6.5, 7.1, 7.2, 7.5, 7.6_
 
-  - [ ] 7.3 Implement entries router in `backend/routers/entries.py` (TDD green phase)
+  - [x] 7.3 Implement entries router in `backend/routers/entries.py` (TDD green phase)
     - Implement `GET /`, `POST /`, `PATCH /{entry_id}`, `DELETE /{entry_id}` endpoints
     - Wire `EntryRepository` → `EntryService` inside each handler via `Depends(get_session)`
     - Return 404 with `{"detail": "Entry not found"}` for missing ids
     - Return 409 on unique constraint violation
     - _Requirements: 1.1, 1.2, 1.6, 3.1, 3.2, 3.3, 3.4, 4.2, 4.3, 4.4, 5.1, 5.4_
 
-  - [ ] 7.4 Implement summary router in `backend/routers/summary.py` (TDD green phase)
+  - [x] 7.4 Implement summary router in `backend/routers/summary.py` (TDD green phase)
     - Implement `GET /monthly` and `GET /annual` endpoints
     - Wire `EntryRepository` → `ComplianceService` via `Depends(get_session)`
     - Validate year range 2000–2099 and month range 1–12; return 422 with identifying message otherwise
     - _Requirements: 6.1, 6.2, 6.3, 7.1, 7.2, 7.5, 7.6_
 
-  - [ ] 7.5 Implement FastAPI app factory in `backend/main.py`
+  - [x] 7.5 Implement FastAPI app factory in `backend/main.py`
     - Create `FastAPI` app with lifespan that checks `DATABASE_URL` and runs Alembic `upgrade head` before accepting requests
     - Register entries and summary routers; add CORS middleware
     - Bind to `0.0.0.0:8080` when started via `CC_PYTHON_UV_RUN_COMMAND`
