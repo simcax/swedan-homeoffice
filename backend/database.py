@@ -15,9 +15,11 @@ requested, which in production happens during startup validation.
 """
 
 import logging
+from typing import Any
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
+from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -129,12 +131,92 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 # ---------------------------------------------------------------------------
+# Connection-failure translation at the DB-operation boundary
+# ---------------------------------------------------------------------------
+
+# The ``AsyncSession`` methods the repository (``backend.repository``) actually
+# awaits. Only these async operations can hit the network and therefore raise a
+# raw asyncpg connection error, so these are the ones the proxy wraps. The
+# synchronous ``add`` (and anything else) passes straight through via
+# ``__getattr__``.
+_WRAPPED_METHODS = frozenset(
+    {"execute", "commit", "flush", "refresh", "get", "scalar", "scalars"}
+)
+
+
+def _is_connection_failure(exc: BaseException) -> bool:
+    """Return ``True`` for errors that indicate a database connectivity problem.
+
+    Only *connection-level* failures are translated:
+
+    * ``OSError`` (which includes ``TimeoutError``) raised directly by the
+      asyncpg driver during connect — connection refused, DNS failure, connect
+      timeout, etc.
+    * SQLAlchemy ``OperationalError`` / ``InterfaceError``, which wrap driver
+      connection errors. These already map to 503 via the handlers in
+      ``backend.main``; wrapping them here is harmless and keeps the boundary
+      consistent.
+
+    Generic ``Exception`` subclasses are deliberately *not* matched: an
+    unrelated application error raised through the session must propagate
+    unchanged.
+    """
+    return isinstance(exc, (OSError, OperationalError, InterfaceError))
+
+
+class _ConnectionErrorTranslatingSession:
+    """Transparent proxy around an ``AsyncSession``.
+
+    Intercepts the async operations the repository uses (see
+    :data:`_WRAPPED_METHODS`) and translates *connection-level* failures raised
+    during those awaited calls into :class:`DatabaseUnavailableError`. Every
+    other attribute — including the synchronous ``add`` and session internals —
+    is delegated to the wrapped session via ``__getattr__``, so the proxy
+    behaves like the real ``AsyncSession`` for all operations the application
+    performs.
+
+    Crucially, errors raised *outside* a wrapped DB operation (e.g. an
+    unrelated ``OSError`` from application code in a route handler) are never
+    seen by this proxy and are therefore never reclassified as a database
+    outage.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._session, name)
+        if name in _WRAPPED_METHODS and callable(attr):
+
+            async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    return await attr(*args, **kwargs)
+                except Exception as exc:
+                    if _is_connection_failure(exc):
+                        raise DatabaseUnavailableError(
+                            "Database connection failed"
+                        ) from exc
+                    raise
+
+            return _wrapped
+        return attr
+
+
+# ---------------------------------------------------------------------------
 # FastAPI dependency
 # ---------------------------------------------------------------------------
 
 
 async def get_session() -> AsyncSession:  # type: ignore[return]
     """Yield an AsyncSession for use as a FastAPI dependency.
+
+    The yielded object is a thin proxy around the real ``AsyncSession`` that
+    translates connection-level failures (raw ``OSError``/``TimeoutError`` from
+    the driver, or SQLAlchemy ``OperationalError``/``InterfaceError``) raised by
+    the actual DB operations (``execute``, ``commit``, ``flush``, ``refresh``,
+    ``get``, ``scalar``, ``scalars``) into :class:`DatabaseUnavailableError`.
+    Unrelated errors — including ``OSError`` raised by non-database code in a
+    route handler — propagate untouched.
 
     Usage::
 
@@ -143,7 +225,4 @@ async def get_session() -> AsyncSession:  # type: ignore[return]
             ...
     """
     async with get_session_factory()() as session:
-        try:
-            yield session
-        except OSError as exc:
-            raise DatabaseUnavailableError("Database connection failed") from exc
+        yield _ConnectionErrorTranslatingSession(session)  # type: ignore[misc]

@@ -132,5 +132,37 @@ class TestDatabaseUnavailableReturns503:
         assert response.json() == {"detail": "Database unavailable"}
 
 
+class TestUnrelatedOSErrorNotTranslated:
+    async def test_unrelated_os_error_is_not_translated_to_503(self) -> None:
+        """An ``OSError`` from non-database code must NOT become a 503.
+
+        Regression guard for the Copilot HIGH finding: ``get_session`` used to
+        wrap the whole ``yield`` in ``except OSError``, so FastAPI's practice of
+        throwing route-handler exceptions back in at the ``yield`` meant *any*
+        downstream ``OSError`` (unrelated filesystem failures, application
+        timeouts, etc.) was reclassified as a database outage. Connection-error
+        translation now happens only around the actual DB operations, so an
+        unrelated ``OSError`` raised in a handler propagates as a normal server
+        error (500), not a 503.
+
+        The throwaway ``/_boom`` route is added inline to a real ``create_app()``
+        app so the production exception handlers are exercised; it is never part
+        of production code.
+        """
+
+        async def _boom() -> None:
+            raise OSError("unrelated disk failure")
+
+        app = create_app()
+        app.add_api_route("/_boom", _boom, methods=["GET"])
+
+        transport = ASGITransport(app=app, raise_app_exceptions=False)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/_boom")
+
+        assert response.status_code != 503
+        assert response.status_code == 500
+
+
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-v"]))
