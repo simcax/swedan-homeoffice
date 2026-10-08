@@ -101,12 +101,31 @@ class TestDatabaseUnavailableReturns503:
         assert response.status_code == 503
         assert response.json() == {"detail": "Database unavailable"}
 
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ConnectionRefusedError("connection refused"),
+            OSError("network is unreachable"),
+            TimeoutError("connect timeout"),
+        ],
+        ids=["connection_refused", "os_error", "timeout_error"],
+    )
     async def test_raw_connection_error_returns_503(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, error: OSError, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        async with _client_raising_at_database_boundary(
-            ConnectionRefusedError("connection refused"), monkeypatch
-        ) as client:
+        """A raw network error raised during ``session.execute`` becomes a 503.
+
+        Initial asyncpg connection failures (connection refused, DNS failure,
+        connect timeout) can surface as ``OSError`` / ``TimeoutError`` during a
+        query rather than being wrapped as SQLAlchemy
+        ``OperationalError``/``InterfaceError``. The ``get_session`` dependency
+        translates them at the session boundary into ``DatabaseUnavailableError``
+        (never swallowing unrelated application ``OSError``s), which the 503
+        handler maps to ``{"detail": "Database unavailable"}``. This exercises
+        the *real* ``get_session`` dependency (it is not overridden), so the
+        execute-time boundary wrapping is covered end-to-end.
+        """
+        async with _client_raising_at_database_boundary(error, monkeypatch) as client:
             response = await client.get(API, params={"year": 2025, "month": 6})
 
         assert response.status_code == 503

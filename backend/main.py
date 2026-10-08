@@ -139,12 +139,18 @@ def create_app(run_migrations: bool | None = None) -> FastAPI:
     app.state.run_migrations = run_migrations
 
     # CORS: the Flet web client may be served from a different origin than the
-    # API (see the Clever Cloud deployment guide). Wide-open in v1; tighten to
-    # specific origins before sharing the app.
+    # API (see the Clever Cloud deployment guide). Wide-open origins are safe in
+    # v1 because this is a single-user API with no auth: there are no cookies or
+    # Authorization headers to protect. ``allow_credentials`` is therefore False
+    # — browsers reject the ``Access-Control-Allow-Origin: *`` wildcard when
+    # credentials are enabled. If an auth mechanism (cookies/tokens) is added
+    # later, credentials must be re-enabled together with an explicit origin
+    # allowlist (``allow_origins=[...]``); the wildcard cannot be used with
+    # credentials.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
