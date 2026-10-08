@@ -19,6 +19,7 @@ Testing approach
 """
 
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -57,6 +58,24 @@ def _client_raising(error: Exception) -> AsyncClient:
     return AsyncClient(transport=transport, base_url="http://test")
 
 
+def _client_raising_at_database_boundary(
+    error: Exception,
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncClient:
+    """Build a client using the real dependency and a failing session factory."""
+    app = create_app()
+
+    @asynccontextmanager
+    async def _failing_session_context() -> AsyncGenerator[_FailingSession, None]:
+        yield _FailingSession(error)
+
+    monkeypatch.setattr(
+        "backend.database.get_session_factory", lambda: _failing_session_context
+    )
+    transport = ASGITransport(app=app)
+    return AsyncClient(transport=transport, base_url="http://test")
+
+
 def _operational_error() -> OperationalError:
     return OperationalError(
         "SELECT ...", params=None, orig=Exception("connection refused")
@@ -77,6 +96,17 @@ class TestDatabaseUnavailableReturns503:
 
     async def test_interface_error_returns_503(self) -> None:
         async with _client_raising(_interface_error()) as client:
+            response = await client.get(API, params={"year": 2025, "month": 6})
+
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Database unavailable"}
+
+    async def test_raw_connection_error_returns_503(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async with _client_raising_at_database_boundary(
+            ConnectionRefusedError("connection refused"), monkeypatch
+        ) as client:
             response = await client.get(API, params={"year": 2025, "month": 6})
 
         assert response.status_code == 503
