@@ -31,10 +31,12 @@ from datetime import date, timedelta
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_session
 from backend.main import create_app
+from backend.repository import EntryRepository
 
 API = "/api/v1/entries"
 
@@ -100,6 +102,59 @@ class TestCreateEntry:
         )
 
         assert response.status_code == 422
+
+
+class TestCreateEntryConflict:
+    """Exercise the 409 duplicate-date fallback on the POST create path.
+
+    When two requests race to create an entry for the same ``work_date``, the
+    second insert violates the ``work_date`` unique constraint. The repository
+    surfaces that as a SQLAlchemy ``IntegrityError``; the router must roll the
+    session back and return ``409 Conflict`` with a clear detail message
+    (per the design document).
+
+    The race is reproduced deterministically by monkeypatching
+    ``EntryRepository.get_by_date`` to return ``None`` so ``upsert_entry``
+    always takes the *create* path, then forcing the create's ``commit`` to
+    raise ``IntegrityError`` as the unique constraint would.
+    """
+
+    async def test_integrity_error_returns_409_and_rolls_back(
+        self,
+        client: AsyncClient,
+        async_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Force the create path: pretend no row exists for the date so
+        # ``upsert_entry`` inserts instead of updating.
+        async def _always_missing(self: EntryRepository, work_date: object) -> None:
+            return None
+
+        monkeypatch.setattr(EntryRepository, "get_by_date", _always_missing)
+
+        # Make the insert's commit collide with the unique constraint, and
+        # record that the router rolls the session back afterwards.
+        rolled_back = {"called": False}
+
+        async def _raise_integrity_error() -> None:
+            raise IntegrityError("INSERT ...", params=None, orig=Exception("duplicate"))
+
+        real_rollback = async_session.rollback
+
+        async def _tracking_rollback() -> None:
+            rolled_back["called"] = True
+            await real_rollback()
+
+        monkeypatch.setattr(async_session, "commit", _raise_integrity_error)
+        monkeypatch.setattr(async_session, "rollback", _tracking_rollback)
+
+        response = await client.post(
+            API, json={"work_date": "2025-06-10", "location": "denmark"}
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Entry already exists for this date"
+        assert rolled_back["called"], "the session was not rolled back"
 
 
 # ---------------------------------------------------------------------------

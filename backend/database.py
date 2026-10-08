@@ -1,6 +1,7 @@
 """Async SQLAlchemy engine and session configuration.
 
-Reads DATABASE_URL from the environment via pydantic-settings and rewrites
+Reads DATABASE_URL exclusively from the process environment via
+pydantic-settings (no ``.env`` fallback) and rewrites
 ``postgresql://`` → ``postgresql+asyncpg://`` automatically.
 
 Initialization is *lazy*: the settings are loaded and the engine / session
@@ -39,10 +40,10 @@ class _DatabaseSettings(BaseSettings):
         return v.replace("postgresql://", "postgresql+asyncpg://", 1)
 
     model_config = {
-        "env_file": ".env",
-        "env_file_encoding": "utf-8",
-        # Ignore unrelated keys in the local .env (e.g. GITHUB_TOKEN); only
-        # DATABASE_URL is consumed. CI/production inject DATABASE_URL directly.
+        # DATABASE_URL must come exclusively from the process environment
+        # (Requirement 11.1); no ``.env`` fallback is permitted, so startup
+        # aborts when the variable is absent. Ignore unrelated process env vars
+        # (e.g. GITHUB_TOKEN); only DATABASE_URL is consumed.
         "extra": "ignore",
     }
 
@@ -86,11 +87,11 @@ def resolve_database_url() -> str:
     """Return the async-driver (``postgresql+asyncpg://``) database URL.
 
     This is the single, shared resolver for the connection string. It reads
-    from the same source as the application engine — the environment *and* the
-    local ``.env`` file via pydantic-settings — and applies the asyncpg scheme
-    rewrite. Alembic's ``env.py`` uses this (instead of reading ``os.environ``
-    directly) so startup validation and migrations always target the exact same
-    configuration, including ``.env``-only local setups.
+    from the same source as the application engine — the process environment
+    only (no ``.env`` fallback), via pydantic-settings — and applies the
+    asyncpg scheme rewrite. Alembic's ``env.py`` uses this (instead of reading
+    ``os.environ`` directly) so startup validation and migrations always target
+    the exact same environment-only configuration.
 
     Raises:
         DatabaseConfigError: When ``DATABASE_URL`` cannot be resolved.
