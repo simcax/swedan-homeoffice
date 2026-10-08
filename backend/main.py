@@ -29,8 +29,11 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import InterfaceError, OperationalError
+from starlette.status import HTTP_503_SERVICE_UNAVAILABLE
 
 from backend.database import get_engine
 from backend.routers import entries, summary
@@ -148,6 +151,29 @@ def create_app(run_migrations: bool | None = None) -> FastAPI:
 
     app.include_router(entries.router)
     app.include_router(summary.router)
+
+    # Database connectivity failures must surface as HTTP 503, not 500
+    # (Requirements 9.5 and 10.5; design "Database Unavailable" contract).
+    # SQLAlchemy raises ``OperationalError`` when the server is unreachable, and
+    # asyncpg connection failures surface as ``InterfaceError`` — translate both
+    # into a 503 so clients can distinguish an outage from a server bug.
+    async def _database_unavailable_handler(
+        request: Request,
+        exc: OperationalError | InterfaceError,
+    ) -> JSONResponse:
+        logger.warning(
+            "Database connectivity error handling %s %s: %s",
+            request.method,
+            request.url.path,
+            exc.__class__.__name__,
+        )
+        return JSONResponse(
+            status_code=HTTP_503_SERVICE_UNAVAILABLE,
+            content={"detail": "Database unavailable"},
+        )
+
+    app.add_exception_handler(OperationalError, _database_unavailable_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(InterfaceError, _database_unavailable_handler)  # type: ignore[arg-type]
 
     return app
 

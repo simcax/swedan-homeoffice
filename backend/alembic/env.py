@@ -1,8 +1,9 @@
 """Alembic environment configuration for async SQLAlchemy (asyncpg).
 
 Uses the same async engine as the application so migrations run against the
-exact same connection settings.  The DATABASE_URL is read from the environment
-via the same pydantic-settings mechanism used by database.py.
+exact same connection settings.  The DATABASE_URL is read exclusively from the
+process environment (no ``.env`` fallback) via the same pydantic-settings
+mechanism used by database.py.
 """
 
 import asyncio
@@ -41,10 +42,10 @@ def _get_url() -> str:
 
     Delegates to :func:`backend.database.resolve_database_url` — the single
     shared resolver used by the application engine — so migrations read the
-    connection string from the same source as startup validation (environment
-    *and* the local ``.env`` file) and the asyncpg scheme rewrite is applied
-    once, consistently. Previously this read ``os.environ`` directly, which
-    diverged from the app in ``.env``-only setups and aborted migrations.
+    connection string from the same source as startup validation (the process
+    environment only, no ``.env`` fallback) and the asyncpg scheme rewrite is
+    applied once, consistently. Previously this read ``os.environ`` directly,
+    which could diverge from the app's pydantic-settings resolution.
     """
     return resolve_database_url()
 
