@@ -9,8 +9,9 @@ and PostgreSQL (production).
 
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped
 
 from backend.models import WorkEntry
 from backend.schemas import WorkEntryCreate, WorkLocation
@@ -28,10 +29,44 @@ class EntryNotFoundError(Exception):
 
 
 def _first_of_next_month(year: int, month: int) -> date:
-    """Return the first day of the month following ``year``/``month``."""
+    """Return the first day of the month following ``year``/``month``.
+
+    The entries contract accepts any ``year >= 2000`` with no upper bound
+    (Requirement 5.2), but Python's :class:`datetime.date` only supports years
+    up to 9999. For the terminal boundary (December 9999) the "first day of the
+    next month" would overflow, so :data:`datetime.date.max` is returned as an
+    inclusive-of-the-last-representable-day ceiling instead of raising.
+    """
+    if year >= date.max.year and month == 12:
+        return date.max
     if month == 12:
         return date(year + 1, 1, 1)
     return date(year, month + 1, 1)
+
+
+def _first_of_next_year(year: int) -> date:
+    """Return the first day of the year following ``year``.
+
+    As with :func:`_first_of_next_month`, the year following 9999 is not
+    representable, so :data:`datetime.date.max` is used as the ceiling for the
+    terminal year rather than raising ``ValueError``.
+    """
+    if year >= date.max.year:
+        return date.max
+    return date(year + 1, 1, 1)
+
+
+def _before(column: Mapped[date], end: date) -> ColumnElement[bool]:
+    """Build the upper-bound predicate for a half-open date range.
+
+    Normally the range is half-open (``work_date < end``). When ``end`` is the
+    terminal :data:`datetime.date.max` ceiling (returned by the helpers above
+    for years at/after 9999), the last representable day must be *included*, so
+    an inclusive ``<=`` comparison is used instead.
+    """
+    if end == date.max:
+        return column <= end
+    return column < end
 
 
 class EntryRepository:
@@ -53,7 +88,7 @@ class EntryRepository:
         end = _first_of_next_month(year, month)
         result = await self._session.execute(
             select(WorkEntry)
-            .where(WorkEntry.work_date >= start, WorkEntry.work_date < end)
+            .where(WorkEntry.work_date >= start, _before(WorkEntry.work_date, end))
             .order_by(WorkEntry.work_date.asc())
         )
         return list(result.scalars().all())
@@ -61,10 +96,10 @@ class EntryRepository:
     async def get_by_year(self, year: int) -> list[WorkEntry]:
         """Return all entries in ``year`` ordered by ``work_date`` ascending."""
         start = date(year, 1, 1)
-        end = date(year + 1, 1, 1)
+        end = _first_of_next_year(year)
         result = await self._session.execute(
             select(WorkEntry)
-            .where(WorkEntry.work_date >= start, WorkEntry.work_date < end)
+            .where(WorkEntry.work_date >= start, _before(WorkEntry.work_date, end))
             .order_by(WorkEntry.work_date.asc())
         )
         return list(result.scalars().all())

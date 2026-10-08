@@ -141,19 +141,20 @@ class TestListEntries:
         response = await client.get(API, params={"year": 1999, "month": 6})
         assert response.status_code == 422
 
-    async def test_year_above_2099_returns_422(self, client: AsyncClient) -> None:
-        # Unbounded years previously reached the repository and raised
-        # ValueError at the date() boundary (e.g. year 10000), surfacing as a
-        # 500. The upper bound keeps every accepted value inside date's range.
-        response = await client.get(API, params={"year": 10000, "month": 6})
-        assert response.status_code == 422
+    async def test_year_after_2099_is_accepted(self, client: AsyncClient) -> None:
+        # The entries contract accepts any year >= 2000 (Req 5.2); the 2000-2099
+        # limit is summary-only. 2100 must therefore succeed, not 422.
+        response = await client.get(API, params={"year": 2100, "month": 6})
+        assert response.status_code == 200
+        assert response.json() == []
 
-    async def test_year_at_upper_boundary_is_accepted(
+    async def test_terminal_year_boundary_does_not_500(
         self, client: AsyncClient
     ) -> None:
-        # 2099 is the inclusive upper bound and must not trip the repository's
-        # date-boundary arithmetic (``date(year + 1, 1, 1)``).
-        response = await client.get(API, params={"year": 2099, "month": 12})
+        # December 9999 is the terminal date boundary: "first day of next month"
+        # would overflow date. The repository must clamp to date.max instead of
+        # raising ValueError (which would surface as a 500).
+        response = await client.get(API, params={"year": 9999, "month": 12})
         assert response.status_code == 200
         assert response.json() == []
 

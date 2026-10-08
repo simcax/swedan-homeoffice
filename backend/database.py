@@ -82,6 +82,22 @@ def _load_settings() -> _DatabaseSettings:
         ) from exc
 
 
+def resolve_database_url() -> str:
+    """Return the async-driver (``postgresql+asyncpg://``) database URL.
+
+    This is the single, shared resolver for the connection string. It reads
+    from the same source as the application engine — the environment *and* the
+    local ``.env`` file via pydantic-settings — and applies the asyncpg scheme
+    rewrite. Alembic's ``env.py`` uses this (instead of reading ``os.environ``
+    directly) so startup validation and migrations always target the exact same
+    configuration, including ``.env``-only local setups.
+
+    Raises:
+        DatabaseConfigError: When ``DATABASE_URL`` cannot be resolved.
+    """
+    return _load_settings().database_url
+
+
 def get_engine() -> AsyncEngine:
     """Return the process-wide async engine, creating it on first use."""
     global _engine

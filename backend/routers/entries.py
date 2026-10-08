@@ -34,13 +34,13 @@ router = APIRouter(prefix="/api/v1/entries", tags=["entries"])
 _ENTRY_NOT_FOUND = "Entry not found"
 
 # Query-parameter constraints. Out-of-range values produce a 422 response.
-# The upper bound (2099) matches the summary router and keeps every accepted
-# value safely inside Python's ``date`` range, so the repository's date-boundary
-# arithmetic (e.g. ``date(year + 1, 1, 1)``) can never raise ``ValueError`` and
-# surface as a 500 (``date`` supports years only up to 9999).
+# The entries contract accepts any ``year >= 2000`` with no upper bound
+# (Requirement 5.2/5.4) — the 2000–2099 limit applies only to the summary
+# endpoints. The repository handles the terminal ``date`` boundary (years at or
+# beyond 9999) without raising, so no artificial upper bound is needed here.
 _YearParam = Annotated[
     int,
-    Query(ge=2000, le=2099, description="Calendar year in the range 2000-2099"),
+    Query(ge=2000, description="Calendar year (>= 2000)"),
 ]
 _MonthParam = Annotated[
     int,
