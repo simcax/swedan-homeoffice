@@ -52,6 +52,10 @@ class DatabaseConfigError(RuntimeError):
     """Raised when ``DATABASE_URL`` is missing or invalid at first use."""
 
 
+class DatabaseUnavailableError(RuntimeError):
+    """Raised when a database operation fails with a network error."""
+
+
 # ---------------------------------------------------------------------------
 # Lazy engine / session-factory initialization
 # ---------------------------------------------------------------------------
@@ -139,4 +143,7 @@ async def get_session() -> AsyncSession:  # type: ignore[return]
             ...
     """
     async with get_session_factory()() as session:
-        yield session
+        try:
+            yield session
+        except OSError as exc:
+            raise DatabaseUnavailableError("Database connection failed") from exc
