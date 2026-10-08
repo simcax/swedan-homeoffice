@@ -17,9 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 # ---------------------------------------------------------------------------
 config = context.config
 
-# Set up Python logging from the ini file.
+# Set up Python logging from the ini file. ``disable_existing_loggers=False``
+# preserves loggers configured before Alembic runs (e.g. ``backend.main``),
+# so a migration-failure message logged by the caller is still emitted when
+# migrations run in-process during application startup (Requirement 11.5).
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # ---------------------------------------------------------------------------
 # Import application metadata so autogenerate can detect schema changes

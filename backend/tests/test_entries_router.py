@@ -25,7 +25,6 @@ Endpoint contract under test (from the design document)::
 Requirements: 1.1, 1.2, 1.6, 2.1, 3.1, 3.2, 3.3, 3.4, 4.2, 4.3, 4.4, 5.1, 5.2, 5.4
 """
 
-import os
 from collections.abc import AsyncGenerator
 from datetime import date, timedelta
 
@@ -34,12 +33,8 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# ``backend.database`` (imported transitively by ``backend.main`` and the
-# entries router) aborts at import time when ``DATABASE_URL`` is missing. Tests
-# never touch the real engine — the ``get_session`` dependency is overridden to
-# use the in-memory-SQLite ``async_session`` fixture — so a throwaway value is
-# injected here purely to satisfy the import-time guard.
-os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
+from backend.database import get_session
+from backend.main import create_app
 
 API = "/api/v1/entries"
 
@@ -55,9 +50,6 @@ async def client(async_session: AsyncSession) -> AsyncGenerator[AsyncClient, Non
     A fresh app is built per test via ``create_app()`` (migrations disabled by
     default) so dependency overrides never leak between tests.
     """
-    from backend.database import get_session
-    from backend.main import create_app
-
     app = create_app()
 
     async def _override_get_session() -> AsyncGenerator[AsyncSession, None]:
