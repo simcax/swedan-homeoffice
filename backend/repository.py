@@ -84,6 +84,8 @@ class EntryRepository:
 
     async def get_by_month(self, year: int, month: int) -> list[WorkEntry]:
         """Return all entries in ``year``/``month`` ordered by ``work_date`` asc."""
+        if year > date.max.year:
+            return []
         start = date(year, month, 1)
         end = _first_of_next_month(year, month)
         result = await self._session.execute(
