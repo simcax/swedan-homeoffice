@@ -1,9 +1,8 @@
-"""Failing tests for ``EntryService`` (TDD red phase — task 5.1).
+"""Unit tests for ``backend.services.entry_service.EntryService``.
 
-These tests describe the behaviour of the yet-to-be-implemented
-``backend.services.entry_service.EntryService``. They are expected to FAIL at
-import time (``backend.services.entry_service`` does not exist yet) until task
-5.2 implements it.
+Verifies the service's orchestration logic in isolation: the ``upsert`` decision
+(create vs. update) and the thin delegation methods, with the repository fully
+mocked so no real database I/O occurs.
 
 The service interface under test (from the design document)::
 

@@ -1,11 +1,9 @@
-"""Failing integration tests for the entries router (TDD red phase — task 7.1).
+"""Integration tests for the entries router (``backend.routers.entries``).
 
-These tests describe the behaviour of the yet-to-be-implemented entries router
-(``backend.routers.entries``) mounted on the FastAPI app factory
-(``backend.main``). They are expected to FAIL at import/collection time because
-neither ``backend.main`` nor ``backend.routers.entries`` exists yet — that is
-the intended red-phase outcome. Task 7.3/7.5 (green phase) implement the router
-and app factory to make these pass.
+Exercises the entries CRUD router mounted on the FastAPI app factory
+(``backend.main``) end-to-end: create/list/update/delete at
+``/api/v1/entries``, plus validation (future dates, unknown locations,
+out-of-range query params) and not-found handling.
 
 Testing approach
 ----------------
@@ -54,9 +52,8 @@ async def client(async_session: AsyncSession) -> AsyncGenerator[AsyncClient, Non
     in-memory-SQLite session created by the ``async_session`` fixture, so the
     router and the test observe the same rolled-back-per-test database.
 
-    Imports of ``backend.main`` / ``backend.database`` are deferred into the
-    fixture so that — during the red phase — a missing app factory / router
-    surfaces as a clean per-test error rather than aborting collection.
+    A fresh app is built per test via ``create_app()`` (migrations disabled by
+    default) so dependency overrides never leak between tests.
     """
     from backend.database import get_session
     from backend.main import create_app
