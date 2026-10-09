@@ -216,7 +216,7 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Bind to `0.0.0.0:8080` when started via `CC_PYTHON_UV_RUN_COMMAND`
     - _Requirements: 11.2, 11.3, 11.4, 11.5_
 
-- [ ] 8. Checkpoint — full backend integration
+- [x] 8. Checkpoint — full backend integration
   - Run all backend tests including integration: `uv run pytest backend/ -v`
   - Verify 204 and 409 error paths work correctly
   - Ask the user if any questions arise before proceeding to the frontend.
