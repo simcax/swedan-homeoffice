@@ -1,4 +1,4 @@
-# Implementation Plan: Work Location Tracker
+Create# Implementation Plan: Work Location Tracker
 
 ## Overview
 
@@ -253,19 +253,19 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Implement `AppState` with `entries: dict[str, WorkEntry]`, `selected_month`, `compliance_summary`, `is_loading`, `error_message`
     - _Requirements: 1.4, 1.5, 8.5_
 
-- [ ] 11. Implement Flet UI components
-  - [ ] 11.1 Implement `entry_tile.py` — color-coded day tile component
+- [x] 11. Implement Flet UI components
+  - [x] 11.1 Implement `entry_tile.py` — color-coded day tile component
     - Build `build_entry_tile(day: int, entry: WorkEntry | None) -> ft.Container`
     - Color mapping: `denmark` → `RED_700`, `home` → `BLUE_700`, `vacation` → `ORANGE_700`, `sick` → `PURPLE_700`, unlogged → `SURFACE`
     - _Requirements: 8.2, 13.5, 14.5_
 
-  - [ ] 11.2 Implement `compliance_bar.py` — compliance progress bar component
+  - [x] 11.2 Implement `compliance_bar.py` — compliance progress bar component
     - Build `build_compliance_bar(summary: ComplianceSummary | None) -> ft.ProgressBar`
     - `value = compliance_pct / 100.0`; color `GREEN_600` when `is_compliant`, `RED_700` otherwise
     - When `summary` is None render bar with `value=0`, `color=SURFACE`, no label
     - _Requirements: 8.1, 8.3, 8.4, 8.5_
 
-  - [ ] 11.3 Implement `calendar_grid.py` — monthly calendar grid
+  - [x] 11.3 Implement `calendar_grid.py` — monthly calendar grid
     - Build `build_calendar_grid(year: int, month: int, entries: dict[str, WorkEntry]) -> ft.GridView`
     - Render one `entry_tile` per day in the month; wire long-press handler for edit/delete
     - _Requirements: 5.1, 8.2_
