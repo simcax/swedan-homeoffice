@@ -221,8 +221,8 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
   - Verify 204 and 409 error paths work correctly
   - Ask the user if any questions arise before proceeding to the frontend.
 
-- [ ] 9. Implement Flet `APIClient`
-  - [ ] 9.1 Write failing tests for `APIClient` in `app/tests/test_api_client.py` (TDD red phase)
+- [x] 9. Implement Flet `APIClient`
+  - [x] 9.1 Write failing tests for `APIClient` in `app/tests/test_api_client.py` (TDD red phase)
     - Mock `httpx.AsyncClient` responses for each method
     - Test `get_entries` returns a list of `WorkEntry` objects
     - Test `post_entry` returns a `WorkEntry` and calls POST with correct payload
@@ -235,7 +235,7 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Test that 409 on POST triggers an automatic PATCH retry
     - _Requirements: 9.3, 9.4, 9.6_
 
-  - [ ] 9.2 Implement `APIClient` in `app/api_client.py` (TDD green phase)
+  - [x] 9.2 Implement `APIClient` in `app/api_client.py` (TDD green phase)
     - Implement all methods using `httpx.AsyncClient` with a 10-second timeout
     - Implement exponential back-off for 503 (1 s, 2 s, 4 s, 3 attempts max)
     - Implement 409 → automatic PATCH retry
