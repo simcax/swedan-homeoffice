@@ -1,12 +1,12 @@
 """Alembic environment configuration for async SQLAlchemy (asyncpg).
 
 Uses the same async engine as the application so migrations run against the
-exact same connection settings.  The DATABASE_URL is read from the environment
-via the same pydantic-settings mechanism used by database.py.
+exact same connection settings.  The DATABASE_URL is read exclusively from the
+process environment (no ``.env`` fallback) via the same pydantic-settings
+mechanism used by database.py.
 """
 
 import asyncio
-import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -17,32 +17,37 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 # ---------------------------------------------------------------------------
 config = context.config
 
-# Set up Python logging from the ini file.
+# Set up Python logging from the ini file. ``disable_existing_loggers=False``
+# preserves loggers configured before Alembic runs (e.g. ``backend.main``),
+# so a migration-failure message logged by the caller is still emitted when
+# migrations run in-process during application startup (Requirement 11.5).
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # ---------------------------------------------------------------------------
 # Import application metadata so autogenerate can detect schema changes
 # ---------------------------------------------------------------------------
+from backend.database import resolve_database_url
 from backend.models import Base
 
 target_metadata = Base.metadata
 
 # ---------------------------------------------------------------------------
-# Resolve DATABASE_URL from the environment
+# Resolve DATABASE_URL
 # ---------------------------------------------------------------------------
 
 
 def _get_url() -> str:
-    """Return the async-driver database URL from the environment."""
-    url = os.environ.get("DATABASE_URL", "")
-    if not url:
-        raise RuntimeError(
-            "DATABASE_URL environment variable is not set. "
-            "Alembic cannot run migrations without a database connection string."
-        )
-    # Clever Cloud injects postgresql:// — rewrite for asyncpg
-    return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    """Return the async-driver database URL.
+
+    Delegates to :func:`backend.database.resolve_database_url` — the single
+    shared resolver used by the application engine — so migrations read the
+    connection string from the same source as startup validation (the process
+    environment only, no ``.env`` fallback) and the asyncpg scheme rewrite is
+    applied once, consistently. Previously this read ``os.environ`` directly,
+    which could diverge from the app's pydantic-settings resolution.
+    """
+    return resolve_database_url()
 
 
 # ---------------------------------------------------------------------------

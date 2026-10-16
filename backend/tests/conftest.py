@@ -5,9 +5,9 @@ database (via ``aiosqlite``) for fast, isolated repository/integration tests.
 Each test gets a fresh schema created from the ORM metadata and the session is
 rolled back / disposed after the test so no state leaks between tests.
 
-This deliberately avoids importing ``backend.database`` because that module
-aborts at import time when ``DATABASE_URL`` is not set; tests build their own
-engine instead.
+Tests build their own in-memory engine here rather than using
+``backend.database``'s lazily-initialized engine, so they never depend on
+``DATABASE_URL`` or touch a real database.
 """
 
 from collections.abc import AsyncGenerator
