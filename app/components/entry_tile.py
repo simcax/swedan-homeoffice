@@ -7,7 +7,8 @@ logged work location, so a user can read a whole month's pattern at a glance:
 * ``home``     → blue   (worked from home in Sweden)
 * ``vacation`` → orange
 * ``sick``     → purple
-* unlogged     → the theme-aware surface colour (no entry yet)
+* unlogged     → a theme-aware surface-container colour (no entry yet) so the
+  tile stays distinguishable from the page surface behind it
 
 The builder is a pure function returning an :class:`ft.Container`; it never
 starts the Flet runtime and performs no I/O.
@@ -29,15 +30,16 @@ _LOCATION_COLORS: dict[WorkLocation, str] = {
     WorkLocation.SICK: ft.Colors.PURPLE_700,
 }
 
-# Colour used for days that have no logged entry yet.
-_UNLOGGED_COLOR: str = ft.Colors.SURFACE
+# Colour used for days that have no logged entry yet. A surface-container
+# colour keeps the tile visible against the SURFACE-coloured page behind it.
+_UNLOGGED_COLOR: str = ft.Colors.SURFACE_CONTAINER_HIGHEST
 
 
 def tile_color(entry: WorkEntry | None) -> str:
     """Return the background colour for a tile given its ``entry``.
 
-    ``None`` (an unlogged day) maps to the theme-aware surface colour; any
-    logged entry maps to the colour for its :class:`WorkLocation`.
+    ``None`` (an unlogged day) maps to the theme-aware surface-container
+    colour; any logged entry maps to the colour for its :class:`WorkLocation`.
     """
     if entry is None:
         return _UNLOGGED_COLOR

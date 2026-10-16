@@ -47,8 +47,8 @@ class TestTileColor:
     def test_sick_maps_to_purple(self) -> None:
         assert tile_color(_entry(WorkLocation.SICK)) == ft.Colors.PURPLE_700
 
-    def test_unlogged_maps_to_surface(self) -> None:
-        assert tile_color(None) == ft.Colors.SURFACE
+    def test_unlogged_maps_to_surface_container(self) -> None:
+        assert tile_color(None) == ft.Colors.SURFACE_CONTAINER_HIGHEST
 
 
 # ---------------------------------------------------------------------------
@@ -73,10 +73,10 @@ class TestBuildEntryTile:
 
         assert tile.bgcolor == ft.Colors.ORANGE_700
 
-    def test_unlogged_tile_uses_surface_color(self) -> None:
+    def test_unlogged_tile_uses_surface_container_color(self) -> None:
         tile = build_entry_tile(10, None)
 
-        assert tile.bgcolor == ft.Colors.SURFACE
+        assert tile.bgcolor == ft.Colors.SURFACE_CONTAINER_HIGHEST
 
     def test_logged_tile_text_is_white_for_contrast(self) -> None:
         tile = build_entry_tile(10, _entry(WorkLocation.HOME))

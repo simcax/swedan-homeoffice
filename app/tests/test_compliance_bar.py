@@ -70,10 +70,10 @@ def test_non_compliant_bar_is_red() -> None:
 
 
 def test_none_summary_is_neutral_with_no_label() -> None:
-    """Requirement 8.5: None -> value 0, SURFACE colour, no label."""
+    """Requirement 8.5: None -> value 0, visible neutral colour, no label."""
     bar = build_compliance_bar(None)
     assert bar.value == 0
-    assert bar.color == ft.Colors.SURFACE
+    assert bar.color == ft.Colors.SURFACE_CONTAINER_HIGHEST
     assert bar.tooltip is None
 
 
@@ -89,6 +89,18 @@ def test_full_compliance_bar() -> None:
     assert bar.color == ft.Colors.GREEN_600
 
 
+def test_value_clamped_above_100() -> None:
+    """A pct above 100 is clamped to 1.0 (matches the module docstring)."""
+    bar = build_compliance_bar(_summary(compliance_pct=120.0, is_compliant=True))
+    assert bar.value == 1.0
+
+
+def test_value_clamped_below_0() -> None:
+    """A negative pct is clamped to 0.0 (matches the module docstring)."""
+    bar = build_compliance_bar(_summary(compliance_pct=-5.0, is_compliant=False))
+    assert bar.value == 0.0
+
+
 # ---------------------------------------------------------------------------
 # property-based tests
 # ---------------------------------------------------------------------------
@@ -101,11 +113,27 @@ def test_full_compliance_bar() -> None:
 def test_value_always_equals_pct_over_100(
     compliance_pct: float, is_compliant: bool
 ) -> None:
-    """For any summary, value == compliance_pct / 100.0 (Requirement 8.1)."""
+    """For an in-range summary, value == compliance_pct / 100.0 (Req 8.1)."""
     bar = build_compliance_bar(
         _summary(compliance_pct=compliance_pct, is_compliant=is_compliant)
     )
     assert bar.value == compliance_pct / 100.0
+
+
+@given(
+    compliance_pct=st.floats(
+        min_value=-1000.0, max_value=1000.0, allow_nan=False, allow_infinity=False
+    ),
+    is_compliant=st.booleans(),
+)
+def test_value_always_within_unit_range(
+    compliance_pct: float, is_compliant: bool
+) -> None:
+    """For any pct, value stays within the 0.0–1.0 range the control expects."""
+    bar = build_compliance_bar(
+        _summary(compliance_pct=compliance_pct, is_compliant=is_compliant)
+    )
+    assert 0.0 <= bar.value <= 1.0
 
 
 @given(

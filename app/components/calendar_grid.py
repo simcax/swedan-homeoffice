@@ -5,6 +5,9 @@ an :class:`ft.GridView`. Each day is looked up in the ``entries`` mapping (keyed
 by ISO date string ``"YYYY-MM-DD"`` — the same convention used by
 :class:`app.state.AppState`); days without a logged entry render as unlogged.
 
+The grid is laid out as a real Mon–Sun calendar: blank placeholder cells are
+inserted before day 1 so that each day falls under its correct weekday column.
+
 An optional ``on_day_long_press`` callback can be supplied so a parent view can
 later wire edit/delete behaviour. The callback receives the day-of-month number
 (``int``) of the long-pressed tile. Long-press is wired via each tile's
@@ -28,7 +31,7 @@ from app.api_client import WorkEntry
 from app.components.entry_tile import build_entry_tile
 
 # Number of weekday columns in the grid (Mon–Sun).
-_RUNS_COUNT = 7
+_COLUMNS = 7
 
 
 def _iso_key(year: int, month: int, day: int) -> str:
@@ -55,12 +58,17 @@ def build_calendar_grid(
             edit/delete later. When ``None``, tiles have no long-press handler.
 
     Returns:
-        An :class:`ft.GridView` containing one tile per day of the month,
-        ordered from day 1 to the last day of the month.
+        An :class:`ft.GridView` laid out Mon–Sun. The controls are
+        ``first_weekday`` blank placeholder cells (so day 1 lands under its
+        real weekday) followed by one tile per day, ordered from day 1 to the
+        last day of the month.
     """
-    _, days_in_month = calendar.monthrange(year, month)
+    first_weekday, days_in_month = calendar.monthrange(year, month)
 
-    tiles: list[ft.Container] = []
+    # ``calendar.monthrange`` returns Monday=0 … Sunday=6 for day 1, which maps
+    # directly onto a Mon–Sun column layout.
+    controls: list[ft.Control] = [_blank_cell() for _ in range(first_weekday)]
+
     for day in range(1, days_in_month + 1):
         entry = entries.get(_iso_key(year, month, day))
         tile = build_entry_tile(day, entry)
@@ -68,16 +76,21 @@ def build_calendar_grid(
         if on_day_long_press is not None:
             tile.on_long_press = _make_long_press_handler(day, on_day_long_press)
 
-        tiles.append(tile)
+        controls.append(tile)
 
     return ft.GridView(
-        controls=tiles,
-        runs_count=_RUNS_COUNT,
+        controls=controls,
+        runs_count=_COLUMNS,
         spacing=8,
         run_spacing=8,
         padding=8,
         expand=True,
     )
+
+
+def _blank_cell() -> ft.Container:
+    """Return an empty placeholder cell used to pad the grid before day 1."""
+    return ft.Container(data=None)
 
 
 def _make_long_press_handler(
