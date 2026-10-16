@@ -33,6 +33,10 @@ from app.components.entry_tile import build_entry_tile
 # Number of weekday columns in the grid (Mon–Sun).
 _COLUMNS = 7
 
+# Marker stored on each leading placeholder cell's ``data`` so callers can tell
+# blanks apart from day tiles (which carry their integer day-of-month).
+BLANK_CELL = "blank"
+
 
 def _iso_key(year: int, month: int, day: int) -> str:
     """Return the ISO date key ``"YYYY-MM-DD"`` for a day in the month."""
@@ -89,8 +93,12 @@ def build_calendar_grid(
 
 
 def _blank_cell() -> ft.Container:
-    """Return an empty placeholder cell used to pad the grid before day 1."""
-    return ft.Container(data=None)
+    """Return an empty placeholder cell used to pad the grid before day 1.
+
+    The cell is marked with ``data=BLANK_CELL`` so it is explicitly
+    distinguishable from day tiles (which carry an integer day-of-month).
+    """
+    return ft.Container(data=BLANK_CELL)
 
 
 def _make_long_press_handler(

@@ -16,7 +16,7 @@ from datetime import date
 import flet as ft
 
 from app.api_client import WorkEntry, WorkLocation
-from app.components.calendar_grid import build_calendar_grid
+from app.components.calendar_grid import BLANK_CELL, build_calendar_grid
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -35,12 +35,12 @@ def _entry(year: int, month: int, day: int, location: WorkLocation) -> WorkEntry
 
 def _tiles(grid: ft.GridView) -> list[ft.Container]:
     """Return only the real day tiles (leading blank placeholders excluded)."""
-    return [c for c in grid.controls if c.data is not None]
+    return [c for c in grid.controls if c.data != BLANK_CELL]
 
 
 def _blanks(grid: ft.GridView) -> list[ft.Container]:
-    """Return the leading blank placeholder cells (``data is None``)."""
-    return [c for c in grid.controls if c.data is None]
+    """Return the leading blank placeholder cells (``data == BLANK_CELL``)."""
+    return [c for c in grid.controls if c.data == BLANK_CELL]
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +110,7 @@ class TestWeekdayAlignment:
         first_weekday, _ = calendar.monthrange(2025, 6)
 
         leading = grid.controls[:first_weekday]
-        assert all(cell.data is None for cell in leading)
+        assert all(cell.data == BLANK_CELL for cell in leading)
         assert grid.controls[first_weekday].data == 1
 
     def test_blanks_count_for_every_month(self) -> None:
