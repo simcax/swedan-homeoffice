@@ -242,14 +242,14 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Raise a typed `APIError` on unrecoverable failures
     - _Requirements: 9.3, 9.4, 9.6_
 
-- [ ] 10. Implement `AppState` and state management
-  - [ ] 10.1 Write failing tests for `AppState` in `app/tests/test_state.py` (TDD red phase)
+- [x] 10. Implement `AppState` and state management
+  - [x] 10.1 Write failing tests for `AppState` in `app/tests/test_state.py` (TDD red phase)
     - Test initial state has empty entries dict, `is_loading=False`, `error_message=None`
     - Test applying a new entry updates `entries[date]`
     - Test clearing error resets `error_message` to None
     - _Requirements: 1.4, 1.5_
 
-  - [ ] 10.2 Implement `AppState` dataclass in `app/state.py` (TDD green phase)
+  - [x] 10.2 Implement `AppState` dataclass in `app/state.py` (TDD green phase)
     - Implement `AppState` with `entries: dict[str, WorkEntry]`, `selected_month`, `compliance_summary`, `is_loading`, `error_message`
     - _Requirements: 1.4, 1.5, 8.5_
 
