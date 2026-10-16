@@ -161,7 +161,11 @@ def _is_connection_failure(exc: BaseException) -> bool:
     unrelated application error raised through the session must propagate
     unchanged.
     """
-    return isinstance(exc, (OSError, OperationalError, InterfaceError))
+    from sqlalchemy.exc import DBAPIError
+
+    return isinstance(exc, (OSError, OperationalError, InterfaceError)) or (
+        isinstance(exc, DBAPIError) and exc.connection_invalidated
+    )
 
 
 class _ConnectionErrorTranslatingSession:
