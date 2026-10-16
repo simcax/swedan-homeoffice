@@ -1163,6 +1163,7 @@ source = { editable = "app" }
 dependencies = [
     { name = "flet" },
     { name = "httpx" },
+    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
@@ -1177,6 +1178,7 @@ dev = [
 requires-dist = [
     { name = "flet", specifier = ">=0.24.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "pydantic", specifier = ">=2.9.0" },
 ]
 
 [package.metadata.requires-dev]
