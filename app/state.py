@@ -11,6 +11,8 @@
 * ``backend_generation`` — a monotonic counter identifying the current
   backend "era", bumped whenever the configured backend changes so results
   from requests started under an earlier backend can be discarded.
+* ``annual_summary_generation`` — a request counter that prevents older
+  overlapping annual-summary responses from replacing newer results.
 
 This module contains pure dataclass logic only; it never starts the Flet
 runtime. Mutations are applied in place and the view layer is responsible for
@@ -52,6 +54,8 @@ class AppState:
     # writing results, so a request started under an earlier backend that
     # completes after a switch is discarded instead of writing stale IDs.
     backend_generation: int = 0
+    # Ensures the latest annual-summary request wins when refreshes overlap.
+    annual_summary_generation: int = 0
 
     def apply_entry(self, entry: WorkEntry) -> None:
         """Insert or replace ``entry`` keyed by its ISO date string.

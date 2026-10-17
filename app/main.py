@@ -153,12 +153,10 @@ async def load_annual_summary(
     backend is unreachable, mirroring :func:`_load_initial_data`'s best-effort
     behaviour.
 
-    When ``generation`` is given it is re-checked against
-    ``state.backend_generation`` immediately before writing the result; a
-    mismatch means the backend changed while the request was in flight, so the
-    stale result is discarded and the method returns ``False`` (Fix A).
-    ``generation=None`` disables the guard, keeping existing call sites
-    unchanged.
+    Before storing the response, this checks that the requested year is still
+    selected, that no newer annual-summary request has started, and (when
+    ``generation`` is supplied) that the backend has not changed in flight.
+    Superseded results are discarded and the method returns ``False``.
 
     Args:
         state: The shared in-memory :class:`AppState` to populate.
@@ -169,12 +167,19 @@ async def load_annual_summary(
         ``True`` when the annual summary was fetched and stored, ``False`` when
         the request failed (or was superseded) and the previous value was kept.
     """
+    year = state.selected_month.year
+    state.annual_summary_generation += 1
+    request_generation = state.annual_summary_generation
     try:
-        annual = await api_client.get_annual_summary(state.selected_month.year)
+        annual = await api_client.get_annual_summary(year)
     except APIError:
         return False
 
-    if generation is not None and state.backend_generation != generation:
+    if (
+        request_generation != state.annual_summary_generation
+        or state.selected_month.year != year
+        or (generation is not None and state.backend_generation != generation)
+    ):
         return False
 
     state.annual_summary = annual
@@ -214,6 +219,7 @@ async def reset_for_new_backend(state: AppState, api_client: APIClient) -> None:
     # Open a new backend era: any in-flight request from the previous
     # generation will fail its guard check and have its write discarded.
     state.backend_generation += 1
+    state.annual_summary_generation += 1
     gen = state.backend_generation
 
     # Drop everything fetched from the old backend before any edit/delete can

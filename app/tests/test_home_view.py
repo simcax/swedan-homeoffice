@@ -11,6 +11,7 @@ Requirements: 1.1, 1.4, 1.5, 2.3, 2.4, 2.5, 8.1, 8.2, 13.1, 13.5, 13.6, 14.1,
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock
 
@@ -564,6 +565,59 @@ class TestPageApiSmoke:
 
 
 class TestBackendGenerationGuard:
+    async def test_error_refresh_discards_result_after_backend_switch(self) -> None:
+        from app.views.home_view import ErrorAction, _dispatch_error_surface
+
+        state = _state()
+        state.error_action = ErrorAction.SNACKBAR_REFRESH
+        state.error_message = "Entry no longer exists."
+        generation = state.backend_generation
+        stale_entry = _entry(5, WorkLocation.HOME)
+
+        async def _entries(_year: int, _month: int):
+            state.backend_generation += 1
+            state.entries.clear()
+            return [stale_entry]
+
+        client = MagicMock()
+        client.get_entries = AsyncMock(side_effect=_entries)
+        client.get_summary = AsyncMock(return_value=_summary())
+        page = MagicMock(spec=ft.Page)
+        refresh = MagicMock()
+
+        _dispatch_error_surface(
+            page, state, client, refresh, generation=generation
+        )
+        await page.run_task.call_args.args[0]()
+
+        assert state.entries == {}
+        refresh.assert_not_called()
+
+    async def test_error_refresh_discards_result_after_month_navigation(self) -> None:
+        from app.views.home_view import ErrorAction, _dispatch_error_surface
+
+        state = _state()
+        state.error_action = ErrorAction.SNACKBAR_REFRESH
+        state.error_message = "Entry no longer exists."
+        state.entries.clear()
+
+        async def _entries(_year: int, _month: int):
+            state.selected_month = date(2025, 7, 1)
+            return [_entry(5, WorkLocation.HOME)]
+
+        client = MagicMock()
+        client.get_entries = AsyncMock(side_effect=_entries)
+        client.get_summary = AsyncMock(return_value=_summary())
+        page = MagicMock(spec=ft.Page)
+        refresh = MagicMock()
+
+        _dispatch_error_surface(page, state, client, refresh)
+        await page.run_task.call_args.args[0]()
+
+        assert state.selected_month == date(2025, 7, 1)
+        assert state.entries == {}
+        refresh.assert_not_called()
+
     async def test_load_month_discards_result_when_generation_bumped(self) -> None:
         state = _state(month=6)
         existing = _entry(5, WorkLocation.HOME, month=6)
@@ -720,6 +774,69 @@ class TestAnnualRefreshOnMutation:
 
 
 class TestAnnualRefreshOnYearChange:
+    async def test_out_of_order_annual_result_for_previous_year_is_discarded(
+        self,
+    ) -> None:
+        from app.views.home_view import _refresh_annual
+
+        state = _state()
+        previous = _annual(year=2024)
+        state.annual_summary = previous
+
+        async def _annual_for_year(year: int):
+            assert year == 2025
+            state.selected_month = date(2026, 1, 1)
+            return _annual(year=year)
+
+        client = MagicMock()
+        client.get_annual_summary = AsyncMock(side_effect=_annual_for_year)
+
+        await _refresh_annual(
+            state, client, generation=state.backend_generation
+        )
+
+        assert state.annual_summary is previous
+
+    async def test_older_same_year_refresh_cannot_overwrite_newer_result(self) -> None:
+        from app.views.home_view import _refresh_annual
+
+        state = _state()
+        started = [asyncio.Event(), asyncio.Event()]
+        release = [asyncio.Event(), asyncio.Event()]
+        results = [_annual(), _annual()]
+        request_count = 0
+
+        async def _annual_for_year(_year: int):
+            nonlocal request_count
+            request_index = request_count
+            request_count += 1
+            started[request_index].set()
+            await release[request_index].wait()
+            return results[request_index]
+
+        client = MagicMock()
+        client.get_annual_summary = AsyncMock(side_effect=_annual_for_year)
+
+        old_request = asyncio.create_task(
+            _refresh_annual(
+                state, client, generation=state.backend_generation
+            )
+        )
+        await started[0].wait()
+        new_request = asyncio.create_task(
+            _refresh_annual(
+                state, client, generation=state.backend_generation
+            )
+        )
+        await started[1].wait()
+
+        release[1].set()
+        await new_request
+        release[0].set()
+        await old_request
+
+        assert state.annual_summary is results[1]
+
     async def test_cross_year_navigation_refreshes_annual_summary(self) -> None:
         # Navigate from Dec 2025 into Jan 2026: the year changes, so the annual
         # summary must be refreshed for the new year.

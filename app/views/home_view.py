@@ -272,7 +272,9 @@ async def _refresh_annual(
     refresh, so a failed annual refresh never fails the triggering operation.
 
     The write is guarded by :func:`_is_superseded`: when ``generation`` is given
-    and no longer matches ``state.backend_generation`` the result is discarded.
+    and no longer matches ``state.backend_generation``, or when the selected
+    year changes or a newer annual refresh starts while the request is in
+    flight, the result is discarded.
     A local helper (rather than importing :func:`app.main.load_annual_summary`)
     keeps ``home_view`` free of a ``home_view → main`` import cycle.
 
@@ -281,12 +283,19 @@ async def _refresh_annual(
         api_client: The backend :class:`APIClient` to fetch from.
         generation: Optional backend generation guarding the write.
     """
+    year = state.selected_month.year
+    state.annual_summary_generation += 1
+    request_generation = state.annual_summary_generation
     try:
-        annual = await api_client.get_annual_summary(state.selected_month.year)
+        annual = await api_client.get_annual_summary(year)
     except APIError:
         return
 
-    if _is_superseded(state, generation):
+    if (
+        _is_superseded(state, generation)
+        or state.selected_month.year != year
+        or state.annual_summary_generation != request_generation
+    ):
         return
 
     state.annual_summary = annual
@@ -480,6 +489,7 @@ async def load_month(
     month: int,
     *,
     generation: int | None = None,
+    expected_month: date | None = None,
 ) -> bool:
     """Load entries and the compliance summary for ``year``/``month``.
 
@@ -497,18 +507,24 @@ async def load_month(
     ``state.backend_generation`` immediately before writing results; a mismatch
     means the backend changed mid-request, so the write is skipped and the
     method returns ``False`` (Fix A). ``generation=None`` disables the guard.
+    ``expected_month`` can additionally require that the selected month has not
+    changed while this load was in flight.
     """
     try:
         entries = await api_client.get_entries(year, month)
         summary = await api_client.get_summary(year, month)
     except APIError as exc:
-        if _is_superseded(state, generation):
+        if _is_superseded(state, generation) or (
+            expected_month is not None and state.selected_month != expected_month
+        ):
             return False
         _record_error(state, classify_error(exc))
         return False
 
     # Guard the write: a backend switch during the request invalidates results.
-    if _is_superseded(state, generation):
+    if _is_superseded(state, generation) or (
+        expected_month is not None and state.selected_month != expected_month
+    ):
         return False
 
     year_changed = year != state.selected_month.year
@@ -588,7 +604,7 @@ def build_home_view(
         calendar_holder.content = _build_grid(state, _on_day_long_press)
         page.update()
 
-    def _surface_error(ok: bool) -> None:
+    def _surface_error(ok: bool, generation: int) -> None:
         """Show the right UI surface for the latest error after an operation.
 
         No-op when the operation succeeded or there is no classified error.
@@ -598,7 +614,9 @@ def build_home_view(
         """
         if ok or state.error_action is None:
             return
-        _dispatch_error_surface(page, state, api_client, _refresh)
+        _dispatch_error_surface(
+            page, state, api_client, _refresh, generation=generation
+        )
 
     def _on_log_click(location: WorkLocation) -> None:
         async def _task() -> None:
@@ -607,7 +625,7 @@ def build_home_view(
             gen = state.backend_generation
             ok = await log_entry(state, api_client, location, generation=gen)
             _refresh()
-            _surface_error(ok)
+            _surface_error(ok, gen)
 
         page.run_task(_task)
 
@@ -617,7 +635,7 @@ def build_home_view(
             year, month = _shift_month(state.selected_month, delta)
             ok = await load_month(state, api_client, year, month, generation=gen)
             _refresh()
-            _surface_error(ok)
+            _surface_error(ok, gen)
 
         page.run_task(_task)
 
@@ -734,6 +752,8 @@ def _dispatch_error_surface(
     state: AppState,
     api_client: APIClient,
     refresh: Callable[[], None],
+    *,
+    generation: int | None = None,
 ) -> None:
     """Render the UI surface matching ``state.error_action``.
 
@@ -751,18 +771,28 @@ def _dispatch_error_surface(
     """
     action = state.error_action
     message = state.error_message or "Something went wrong. Please try again."
+    request_generation = (
+        state.backend_generation if generation is None else generation
+    )
 
     if action is ErrorAction.SNACKBAR_REFRESH:
         _show_snack(page, message, color=ft.Colors.RED_700)
+        expected_month = state.selected_month
 
         async def _reload() -> None:
             await load_month(
                 state,
                 api_client,
-                state.selected_month.year,
-                state.selected_month.month,
+                expected_month.year,
+                expected_month.month,
+                generation=request_generation,
+                expected_month=expected_month,
             )
-            refresh()
+            if (
+                not _is_superseded(state, request_generation)
+                and state.selected_month == expected_month
+            ):
+                refresh()
 
         page.run_task(_reload)
     elif action is ErrorAction.BANNER:
@@ -851,7 +881,9 @@ def _open_delete_confirm(
             if ok:
                 _show_snack(page, "Entry deleted.", color=ft.Colors.GREEN_700)
             else:
-                _dispatch_error_surface(page, state, api_client, refresh)
+                _dispatch_error_surface(
+                    page, state, api_client, refresh, generation=gen
+                )
 
         page.run_task(_task)
 
@@ -882,7 +914,9 @@ def _open_edit_dialog(
             if ok:
                 _show_snack(page, "Entry updated.", color=ft.Colors.GREEN_700)
             else:
-                _dispatch_error_surface(page, state, api_client, refresh)
+                _dispatch_error_surface(
+                    page, state, api_client, refresh, generation=gen
+                )
 
         page.run_task(_task)
 
