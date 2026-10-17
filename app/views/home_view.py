@@ -232,23 +232,103 @@ def _record_error(state: AppState, classified: ClassifiedError) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _is_superseded(state: AppState, generation: int | None) -> bool:
+    """Return ``True`` when ``generation`` no longer matches the current backend.
+
+    Load and mutation coroutines capture ``state.backend_generation`` when they
+    start and pass it here as ``generation`` immediately before committing
+    results. When a backend switch bumped ``state.backend_generation`` while the
+    network request was in flight, the captured value no longer matches and the
+    write must be skipped so results fetched from the old backend never land in
+    state (closing the temporal race in :func:`app.main.reset_for_new_backend`).
+
+    When ``generation`` is ``None`` the guard is disabled and this always
+    returns ``False``, so existing call sites that do not opt in keep their
+    previous behaviour.
+
+    Args:
+        state: The shared in-memory :class:`AppState`.
+        generation: The backend generation captured at the start of the request,
+            or ``None`` to disable the guard.
+
+    Returns:
+        ``True`` when the write should be skipped, ``False`` otherwise.
+    """
+    return generation is not None and state.backend_generation != generation
+
+
+async def _refresh_annual(
+    state: AppState,
+    api_client: APIClient,
+    *,
+    generation: int | None = None,
+) -> None:
+    """Best-effort refresh of the annual summary for the selected year.
+
+    Fetches ``api_client.get_annual_summary`` for ``state.selected_month.year``
+    and stores it on ``state.annual_summary`` so the summary screen stays fresh
+    after mutations and cross-year navigation (Fix 2). Any :class:`APIError` is
+    swallowed and the previous value is kept, mirroring the monthly summary
+    refresh, so a failed annual refresh never fails the triggering operation.
+
+    The write is guarded by :func:`_is_superseded`: when ``generation`` is given
+    and no longer matches ``state.backend_generation``, or when the selected
+    year changes or a newer annual refresh starts while the request is in
+    flight, the result is discarded.
+    A local helper (rather than importing :func:`app.main.load_annual_summary`)
+    keeps ``home_view`` free of a ``home_view → main`` import cycle.
+
+    Args:
+        state: The shared in-memory :class:`AppState` to populate.
+        api_client: The backend :class:`APIClient` to fetch from.
+        generation: Optional backend generation guarding the write.
+    """
+    if _is_superseded(state, generation):
+        return
+
+    year = state.selected_month.year
+    state.annual_summary_generation += 1
+    request_generation = state.annual_summary_generation
+    try:
+        annual = await api_client.get_annual_summary(year)
+    except APIError:
+        return
+
+    if (
+        _is_superseded(state, generation)
+        or state.selected_month.year != year
+        or state.annual_summary_generation != request_generation
+    ):
+        return
+
+    state.annual_summary = annual
+
+
 async def log_entry(
     state: AppState,
     api_client: APIClient,
     location: WorkLocation,
     work_date: date | None = None,
+    *,
+    generation: int | None = None,
 ) -> bool:
     """Log ``location`` for ``work_date`` (defaults to today) and update state.
 
     On success the new entry is applied to ``state.entries``, the compliance
-    summary for the selected month is refreshed, and any previous error is
-    cleared; the method returns ``True``.
+    summary for the selected month is refreshed, the annual summary is refreshed
+    best-effort (Fix 2), and any previous error is cleared; the method returns
+    ``True``.
 
     On failure ``state.entries`` is left untouched (the calendar state is
     preserved, Requirements 1.5 / 13.6 / 14.6) and ``state.error_message`` is
     populated; the method returns ``False``. A future-date rejection (HTTP 422,
     Requirements 2.3 / 2.4 / 2.5) is reported with a date-adjacent message and,
     like every failure, adds nothing to ``state.entries``.
+
+    When ``generation`` is given it is re-checked against
+    ``state.backend_generation`` immediately before writing results; a mismatch
+    means the backend changed mid-request, so the write is skipped and the
+    method returns ``False`` (Fix A). ``generation=None`` disables the guard.
     """
     target = work_date or date.today()  # noqa: DTZ011
     iso_date = target.isoformat()
@@ -262,7 +342,13 @@ async def log_entry(
         # other 422 fall back to the generic validation message.
         is_future = target > date.today()  # noqa: DTZ011
         context = iso_date if is_future else None
+        if _is_superseded(state, generation):
+            return False
         _record_error(state, classify_error(exc, context=context))
+        return False
+
+    # Guard the write: a backend switch during the request invalidates results.
+    if _is_superseded(state, generation):
         return False
 
     # Success: apply the entry and refresh the compliance indicator.
@@ -270,7 +356,7 @@ async def log_entry(
     state.clear_error()
 
     try:
-        state.compliance_summary = await api_client.get_summary(
+        summary = await api_client.get_summary(
             state.selected_month.year,
             state.selected_month.month,
         )
@@ -278,6 +364,11 @@ async def log_entry(
         # The entry was saved; only the summary refresh failed. Keep the entry
         # and surface a non-destructive notice.
         state.error_message = "Entry saved, but the compliance summary is stale."
+    else:
+        if not _is_superseded(state, generation):
+            state.compliance_summary = summary
+
+    await _refresh_annual(state, api_client, generation=generation)
 
     return True
 
@@ -286,22 +377,35 @@ async def delete_entry(
     state: AppState,
     api_client: APIClient,
     entry: WorkEntry,
+    *,
+    generation: int | None = None,
 ) -> bool:
     """Delete ``entry`` from the backend and clear its tile from state.
 
     On success the entry is removed from ``state.entries`` so its calendar tile
     renders as unlogged (Requirements 4.2, 4.5), the compliance summary for the
-    selected month is refreshed, and any previous error is cleared; the method
-    returns ``True``.
+    selected month is refreshed, the annual summary is refreshed best-effort
+    (Fix 2), and any previous error is cleared; the method returns ``True``.
 
     On failure the entry is left in ``state.entries`` so the tile stays visible
     (Requirement 4.6) and ``state.error_message`` is populated; the method
     returns ``False``.
+
+    When ``generation`` is given it is re-checked against
+    ``state.backend_generation`` immediately before writing results; a mismatch
+    means the backend changed mid-request, so the write is skipped and the
+    method returns ``False`` (Fix A). ``generation=None`` disables the guard.
     """
     try:
         await api_client.delete_entry(entry.id)
     except APIError as exc:
+        if _is_superseded(state, generation):
+            return False
         _record_error(state, classify_error(exc))
+        return False
+
+    # Guard the write: a backend switch during the request invalidates results.
+    if _is_superseded(state, generation):
         return False
 
     # Success: clear the tile and refresh the compliance indicator.
@@ -309,12 +413,17 @@ async def delete_entry(
     state.clear_error()
 
     try:
-        state.compliance_summary = await api_client.get_summary(
+        summary = await api_client.get_summary(
             state.selected_month.year,
             state.selected_month.month,
         )
     except APIError:
         state.error_message = "Entry deleted, but the compliance summary is stale."
+    else:
+        if not _is_superseded(state, generation):
+            state.compliance_summary = summary
+
+    await _refresh_annual(state, api_client, generation=generation)
 
     return True
 
@@ -324,22 +433,36 @@ async def edit_entry(
     api_client: APIClient,
     entry: WorkEntry,
     location: WorkLocation,
+    *,
+    generation: int | None = None,
 ) -> bool:
     """Change ``entry``'s location to ``location`` via PATCH and update state.
 
     On success the updated entry replaces the previous one in ``state.entries``
     (its ``work_date`` is unchanged, Requirements 3.2, 3.5), the compliance
-    summary for the selected month is refreshed, and any previous error is
-    cleared; the method returns ``True``.
+    summary for the selected month is refreshed, the annual summary is refreshed
+    best-effort (Fix 2), and any previous error is cleared; the method returns
+    ``True``.
 
     On failure ``state.entries`` is left untouched so the calendar state is
     preserved (Requirement 3.6) and ``state.error_message`` is populated; the
     method returns ``False``.
+
+    When ``generation`` is given it is re-checked against
+    ``state.backend_generation`` immediately before writing results; a mismatch
+    means the backend changed mid-request, so the write is skipped and the
+    method returns ``False`` (Fix A). ``generation=None`` disables the guard.
     """
     try:
         updated = await api_client.patch_entry(entry.id, location)
     except APIError as exc:
+        if _is_superseded(state, generation):
+            return False
         _record_error(state, classify_error(exc))
+        return False
+
+    # Guard the write: a backend switch during the request invalidates results.
+    if _is_superseded(state, generation):
         return False
 
     # Success: apply the updated entry and refresh the compliance indicator.
@@ -347,12 +470,17 @@ async def edit_entry(
     state.clear_error()
 
     try:
-        state.compliance_summary = await api_client.get_summary(
+        summary = await api_client.get_summary(
             state.selected_month.year,
             state.selected_month.month,
         )
     except APIError:
         state.error_message = "Entry updated, but the compliance summary is stale."
+    else:
+        if not _is_superseded(state, generation):
+            state.compliance_summary = summary
+
+    await _refresh_annual(state, api_client, generation=generation)
 
     return True
 
@@ -362,6 +490,9 @@ async def load_month(
     api_client: APIClient,
     year: int,
     month: int,
+    *,
+    generation: int | None = None,
+    expected_month: date | None = None,
 ) -> bool:
     """Load entries and the compliance summary for ``year``/``month``.
 
@@ -369,18 +500,54 @@ async def load_month(
     freshly fetched month on success (Requirement 1.4). On failure the existing
     calendar grid is preserved (Requirement 5.5) and ``state.error_message`` is
     populated; the method returns ``False``.
+
+    When navigation crosses into a different year the annual summary is
+    refreshed best-effort for the new year so the summary screen stays accurate
+    (Fix 2). That refresh never affects the ``True`` returned on the primary
+    (entries + monthly summary) success.
+
+    When ``generation`` is given it is re-checked against
+    ``state.backend_generation`` immediately before writing results; a mismatch
+    means the backend changed mid-request, so the write is skipped and the
+    method returns ``False`` (Fix A). ``generation=None`` disables the guard.
+    ``expected_month`` can additionally require that the selected month has not
+    changed while this load was in flight. Each load also captures a monotonic
+    request token, so a superseded load is discarded even if navigation later
+    returns to the same month.
     """
+    state.month_load_generation += 1
+    request_generation = state.month_load_generation
+
     try:
         entries = await api_client.get_entries(year, month)
         summary = await api_client.get_summary(year, month)
     except APIError as exc:
+        if _is_superseded(state, generation) or (
+            expected_month is not None and state.selected_month != expected_month
+        ) or state.month_load_generation != request_generation:
+            return False
         _record_error(state, classify_error(exc))
         return False
+
+    # Guard the write: a backend switch during the request invalidates results.
+    if _is_superseded(state, generation) or (
+        expected_month is not None and state.selected_month != expected_month
+    ) or state.month_load_generation != request_generation:
+        return False
+
+    year_changed = year != state.selected_month.year
 
     state.selected_month = date(year, month, 1)
     state.entries = {entry.work_date.isoformat(): entry for entry in entries}
     state.compliance_summary = summary
     state.clear_error()
+
+    # Crossing into a different year makes the cached annual summary stale;
+    # refresh it best-effort for the newly selected year (Fix 2).
+    if year_changed:
+        state.annual_summary = None
+        await _refresh_annual(state, api_client, generation=generation)
+
     return True
 
 
@@ -400,6 +567,8 @@ def build_home_view(
     page: ft.Page,
     state: AppState,
     api_client: APIClient,
+    *,
+    on_state_change: Callable[[], None] | None = None,
 ) -> ft.Container:
     """Build the home calendar screen.
 
@@ -407,6 +576,8 @@ def build_home_view(
         page: The active Flet page; used to schedule async work and repaint.
         state: The shared in-memory :class:`AppState`.
         api_client: The backend :class:`APIClient`.
+        on_state_change: Optional router callback to rebuild the active screen
+            after asynchronous state changes.
 
     Returns:
         An :class:`ft.Container` holding the compliance bar, quick-log buttons,
@@ -444,9 +615,12 @@ def build_home_view(
 
         month_label.value = _month_title(state.selected_month)
         calendar_holder.content = _build_grid(state, _on_day_long_press)
-        page.update()
+        if on_state_change is None:
+            page.update()
+        else:
+            on_state_change()
 
-    def _surface_error(ok: bool) -> None:
+    def _surface_error(ok: bool, generation: int) -> None:
         """Show the right UI surface for the latest error after an operation.
 
         No-op when the operation succeeded or there is no classified error.
@@ -456,22 +630,28 @@ def build_home_view(
         """
         if ok or state.error_action is None:
             return
-        _dispatch_error_surface(page, state, api_client, _refresh)
+        _dispatch_error_surface(
+            page, state, api_client, _refresh, generation=generation
+        )
 
     def _on_log_click(location: WorkLocation) -> None:
         async def _task() -> None:
-            ok = await log_entry(state, api_client, location)
+            # Capture the backend era at task start so a mid-request backend
+            # switch invalidates this write (Fix A).
+            gen = state.backend_generation
+            ok = await log_entry(state, api_client, location, generation=gen)
             _refresh()
-            _surface_error(ok)
+            _surface_error(ok, gen)
 
         page.run_task(_task)
 
     def _on_navigate(delta: int) -> None:
         async def _task() -> None:
+            gen = state.backend_generation
             year, month = _shift_month(state.selected_month, delta)
-            ok = await load_month(state, api_client, year, month)
+            ok = await load_month(state, api_client, year, month, generation=gen)
             _refresh()
-            _surface_error(ok)
+            _surface_error(ok, gen)
 
         page.run_task(_task)
 
@@ -588,6 +768,8 @@ def _dispatch_error_surface(
     state: AppState,
     api_client: APIClient,
     refresh: Callable[[], None],
+    *,
+    generation: int | None = None,
 ) -> None:
     """Render the UI surface matching ``state.error_action``.
 
@@ -605,18 +787,28 @@ def _dispatch_error_surface(
     """
     action = state.error_action
     message = state.error_message or "Something went wrong. Please try again."
+    request_generation = (
+        state.backend_generation if generation is None else generation
+    )
 
     if action is ErrorAction.SNACKBAR_REFRESH:
         _show_snack(page, message, color=ft.Colors.RED_700)
+        expected_month = state.selected_month
 
         async def _reload() -> None:
             await load_month(
                 state,
                 api_client,
-                state.selected_month.year,
-                state.selected_month.month,
+                expected_month.year,
+                expected_month.month,
+                generation=request_generation,
+                expected_month=expected_month,
             )
-            refresh()
+            if (
+                not _is_superseded(state, request_generation)
+                and state.selected_month == expected_month
+            ):
+                refresh()
 
         page.run_task(_reload)
     elif action is ErrorAction.BANNER:
@@ -698,12 +890,16 @@ def _open_delete_confirm(
         page.pop_dialog()
 
         async def _task() -> None:
-            ok = await delete_entry(state, api_client, entry)
+            # Capture the backend era so a mid-request switch is dropped (Fix A).
+            gen = state.backend_generation
+            ok = await delete_entry(state, api_client, entry, generation=gen)
             refresh()
             if ok:
                 _show_snack(page, "Entry deleted.", color=ft.Colors.GREEN_700)
             else:
-                _dispatch_error_surface(page, state, api_client, refresh)
+                _dispatch_error_surface(
+                    page, state, api_client, refresh, generation=gen
+                )
 
         page.run_task(_task)
 
@@ -727,12 +923,16 @@ def _open_edit_dialog(
         page.pop_dialog()
 
         async def _task() -> None:
-            ok = await edit_entry(state, api_client, entry, location)
+            # Capture the backend era so a mid-request switch is dropped (Fix A).
+            gen = state.backend_generation
+            ok = await edit_entry(state, api_client, entry, location, generation=gen)
             refresh()
             if ok:
                 _show_snack(page, "Entry updated.", color=ft.Colors.GREEN_700)
             else:
-                _dispatch_error_surface(page, state, api_client, refresh)
+                _dispatch_error_surface(
+                    page, state, api_client, refresh, generation=gen
+                )
 
         page.run_task(_task)
 

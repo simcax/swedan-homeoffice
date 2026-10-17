@@ -27,7 +27,13 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from app.api_client import APIError, ComplianceSummary, WorkEntry, WorkLocation
+from app.api_client import (
+    AnnualSummary,
+    APIError,
+    ComplianceSummary,
+    WorkEntry,
+    WorkLocation,
+)
 from app.state import AppState
 from app.views.home_view import (
     ClassifiedError,
@@ -65,6 +71,20 @@ def _summary(month: int = 6) -> ComplianceSummary:
         home_days=4,
         compliance_pct=60.0,
         is_compliant=True,
+    )
+
+
+def _annual(year: int = 2025) -> AnnualSummary:
+    return AnnualSummary(
+        year=year,
+        total_days=100,
+        denmark_days=60,
+        vacation_days=10,
+        sick_days=5,
+        home_days=25,
+        compliance_pct=60.0,
+        is_compliant=True,
+        monthly_breakdown=[],
     )
 
 
@@ -271,6 +291,7 @@ class Test409Notification:
         patched = _entry(10, WorkLocation.DENMARK)
         client.post_entry = AsyncMock(return_value=patched)
         client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
 
         ok = await log_entry(
             state, client, WorkLocation.DENMARK, work_date=date(2025, 6, 10)
@@ -397,6 +418,7 @@ class TestClearErrorResetsAction:
         client = MagicMock()
         client.post_entry = AsyncMock(return_value=_entry(10, WorkLocation.DENMARK))
         client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
 
         await log_entry(
             state, client, WorkLocation.DENMARK, work_date=date(2025, 6, 10)

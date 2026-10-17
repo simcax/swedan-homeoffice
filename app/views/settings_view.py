@@ -27,6 +27,7 @@ Requirements: 11.1
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Callable
 from typing import Protocol
 from urllib.parse import urlparse
@@ -136,6 +137,61 @@ def validate_api_base_url(value: str) -> str | None:
     return None
 
 
+def _is_loopback_host(hostname: str) -> bool:
+    """Return ``True`` when ``hostname`` refers to the local loopback.
+
+    The literal ``localhost`` is treated as loopback, as is any IP address
+    inside the IPv4 ``127.0.0.0/8`` block or the IPv6 ``::1`` loopback. Any
+    other hostname (a remote host or non-loopback IP) returns ``False``.
+
+    Args:
+        hostname: The host portion of a parsed URL.
+
+    Returns:
+        ``True`` for loopback hosts, ``False`` otherwise.
+    """
+    host = hostname.strip().lower()
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def warn_insecure_api_base_url(value: str) -> str | None:
+    """Return a warning when ``value`` sends traffic over insecure ``http``.
+
+    Work-location records are transmitted to the backend, so using plain
+    ``http://`` against a *remote* host exposes them in transit. This helper
+    returns a non-blocking warning message in that case. Loopback development
+    URLs (``localhost``, the ``127.0.0.0/8`` block, and the IPv6 ``::1``) over
+    ``http`` are considered safe and return ``None``, as do all ``https`` URLs.
+
+    This is intentionally *not* a hard validation error — callers should still
+    allow the save to proceed while surfacing the warning to the user. Invalid
+    URLs (which :func:`validate_api_base_url` rejects) also return ``None``
+    here, leaving the blocking error to that validator.
+
+    Args:
+        value: The raw URL entered by the user.
+
+    Returns:
+        A human-readable warning message when ``value`` uses ``http`` with a
+        non-loopback host, or ``None`` when no warning is warranted.
+    """
+    parsed = urlparse(value.strip())
+    if parsed.scheme != "http" or not parsed.hostname:
+        return None
+    if _is_loopback_host(parsed.hostname):
+        return None
+    return (
+        "Warning: this URL uses insecure http:// to a remote host. "
+        "Your work-location data will be sent unencrypted. "
+        "Use https:// for remote backends."
+    )
+
+
 # ---------------------------------------------------------------------------
 # view builder
 # ---------------------------------------------------------------------------
@@ -171,6 +227,7 @@ def build_settings_view(
         label="API base URL",
         value=current_value,
         hint_text=DEFAULT_API_BASE_URL,
+        helper_text=warn_insecure_api_base_url(current_value),
         autofocus=True,
     )
 
@@ -195,12 +252,28 @@ def build_settings_view(
             url_field.error_text = None
             normalised = await save_api_base_url(storage, raw)
             url_field.value = normalised
-            page.show_dialog(
-                ft.SnackBar(
-                    content=ft.Text("API URL saved.", color=ft.Colors.WHITE),
-                    bgcolor=ft.Colors.GREEN_700,
+
+            # Non-blocking security warning for remote plain-http backends: the
+            # save still proceeds, but the user is warned (an amber snack bar,
+            # visually distinct from the green success toast, plus a helper
+            # text under the field).
+            warning = warn_insecure_api_base_url(normalised)
+            if warning is not None:
+                url_field.helper_text = warning
+                page.show_dialog(
+                    ft.SnackBar(
+                        content=ft.Text(warning, color=ft.Colors.BLACK),
+                        bgcolor=ft.Colors.AMBER_700,
+                    )
                 )
-            )
+            else:
+                url_field.helper_text = None
+                page.show_dialog(
+                    ft.SnackBar(
+                        content=ft.Text("API URL saved.", color=ft.Colors.WHITE),
+                        bgcolor=ft.Colors.GREEN_700,
+                    )
+                )
             if on_saved is not None:
                 on_saved(normalised)
             page.update()

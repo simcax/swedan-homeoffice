@@ -96,6 +96,11 @@ class APIClient:
     def __init__(self, base_url: str) -> None:
         self._base_url = base_url.rstrip("/")
 
+    @property
+    def base_url(self) -> str:
+        """The normalised base URL this client issues requests against."""
+        return self._base_url
+
     # -- public API --------------------------------------------------------
 
     async def get_entries(self, year: int, month: int) -> list[WorkEntry]:
