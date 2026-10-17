@@ -56,7 +56,7 @@ import os
 
 import flet as ft
 
-from app.api_client import APIClient
+from app.api_client import APIClient, APIError
 from app.state import AppState
 from app.views.home_view import build_home_view
 from app.views.settings_view import (
@@ -139,6 +139,69 @@ def resolve_initial_route(route: str | None) -> str:
     return ROUTE_HOME
 
 
+async def load_annual_summary(state: AppState, api_client: APIClient) -> bool:
+    """Best-effort load of the annual summary for the selected year.
+
+    Fetches ``api_client.get_annual_summary`` for ``state.selected_month.year``
+    and stores the result on ``state.annual_summary``. Any :class:`APIError` is
+    swallowed (the field is left unchanged) so the UI still renders when the
+    backend is unreachable, mirroring :func:`_load_initial_data`'s best-effort
+    behaviour.
+
+    Args:
+        state: The shared in-memory :class:`AppState` to populate.
+        api_client: The backend :class:`APIClient` to fetch from.
+
+    Returns:
+        ``True`` when the annual summary was fetched and stored, ``False`` when
+        the request failed (and the previous value was kept).
+    """
+    try:
+        state.annual_summary = await api_client.get_annual_summary(
+            state.selected_month.year
+        )
+    except APIError:
+        return False
+    return True
+
+
+async def reset_for_new_backend(state: AppState, api_client: APIClient) -> None:
+    """Discard state fetched from a previous backend and reload against ``api_client``.
+
+    When the configured API base URL changes, entries, summaries and IDs
+    fetched from the *old* backend become unsafe to reuse: an edit/delete would
+    send a stale ID to the new backend and could mutate an unrelated record
+    with a colliding ID. This helper clears that stale state up front, then
+    reloads the currently selected month (entries + monthly summary via
+    :func:`app.views.home_view.load_month`) and the annual summary (via
+    :func:`load_annual_summary`) against the new ``api_client``.
+
+    The reload is best-effort: ``load_month`` records any error on ``state`` and
+    the annual fetch is swallowed, so the UI still renders if the new backend is
+    unreachable. The helper is pure of the Flet runtime so it can be unit-tested
+    with a mocked ``api_client`` and a plain :class:`AppState`.
+
+    Args:
+        state: The shared in-memory :class:`AppState` to reset and repopulate.
+        api_client: The newly configured backend :class:`APIClient`.
+    """
+    from app.views.home_view import load_month
+
+    # Drop everything fetched from the old backend before any edit/delete can
+    # target the new one with a stale ID.
+    state.entries = {}
+    state.compliance_summary = None
+    state.annual_summary = None
+
+    await load_month(
+        state,
+        api_client,
+        state.selected_month.year,
+        state.selected_month.month,
+    )
+    await load_annual_summary(state, api_client)
+
+
 def build_view(
     page: ft.Page,
     route: str,
@@ -176,7 +239,7 @@ def build_view(
     if resolved == ROUTE_SUMMARY:
         body: ft.Control = build_summary_view(
             state.compliance_summary,
-            None,
+            state.annual_summary,
         )
     elif resolved == ROUTE_SETTINGS:
         body = build_settings_view(
@@ -250,10 +313,24 @@ async def main(page: ft.Page) -> None:
 
     def _on_settings_saved(new_url: str) -> None:
         # Rebuild the client against the newly saved URL so later requests use
-        # it immediately, then repaint the active screen.
+        # it immediately. When the URL genuinely changed, discard state fetched
+        # from the old backend and reload the selected month against the new
+        # client before any edit/delete can target it with a stale ID (Fix 1).
         nonlocal api_client
+        normalised_new = new_url.rstrip("/")
+        url_changed = normalised_new != api_client.base_url
         api_client = APIClient(new_url)
-        _render(page.route)
+
+        if not url_changed:
+            # Same backend: nothing stale to discard, just repaint.
+            _render(page.route)
+            return
+
+        async def _reset_and_render() -> None:
+            await reset_for_new_backend(state, api_client)
+            _render(page.route)
+
+        page.run_task(_reset_and_render)
 
     def _render(route: str | None) -> None:
         page.views.clear()
@@ -284,11 +361,12 @@ async def main(page: ft.Page) -> None:
 
 
 async def _load_initial_data(state: AppState, api_client: APIClient) -> None:
-    """Best-effort load of the current month's entries and summary.
+    """Best-effort load of the current month's entries, summary and annual summary.
 
     Failures are swallowed so the UI still renders (an empty calendar) when the
     backend is unreachable at launch; the home screen's own error handling
-    surfaces subsequent failures.
+    surfaces subsequent failures. The annual summary is loaded via
+    :func:`load_annual_summary` so the summary screen opens populated too.
     """
     from app.views.home_view import load_month
 
@@ -298,6 +376,7 @@ async def _load_initial_data(state: AppState, api_client: APIClient) -> None:
         state.selected_month.year,
         state.selected_month.month,
     )
+    await load_annual_summary(state, api_client)
 
 
 def _first_of_this_month():

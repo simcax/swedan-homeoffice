@@ -24,7 +24,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import flet as ft
 
-from app.api_client import APIClient
+from app.api_client import (
+    AnnualSummary,
+    APIClient,
+    APIError,
+    ComplianceSummary,
+    WorkEntry,
+    WorkLocation,
+)
 from app.main import (
     DEFAULT_API_BASE_URL,
     KNOWN_ROUTES,
@@ -32,6 +39,8 @@ from app.main import (
     ROUTE_SETTINGS,
     ROUTE_SUMMARY,
     build_view,
+    load_annual_summary,
+    reset_for_new_backend,
     resolve_base_url,
     resolve_initial_route,
 )
@@ -48,6 +57,44 @@ def _fake_storage(*, get_return: object = None) -> MagicMock:
 
 def _app_state() -> AppState:
     return AppState(selected_month=date(2025, 6, 1))
+
+
+def _entry(day: int, location: WorkLocation = WorkLocation.DENMARK) -> WorkEntry:
+    return WorkEntry(
+        id=day,
+        work_date=date(2025, 6, day),
+        location=location,
+        created_at="2025-06-10T08:00:00+00:00",
+        updated_at="2025-06-10T08:00:00+00:00",
+    )
+
+
+def _summary() -> ComplianceSummary:
+    return ComplianceSummary(
+        year=2025,
+        month=6,
+        total_days=10,
+        denmark_days=6,
+        vacation_days=0,
+        sick_days=0,
+        home_days=4,
+        compliance_pct=60.0,
+        is_compliant=True,
+    )
+
+
+def _annual() -> AnnualSummary:
+    return AnnualSummary(
+        year=2025,
+        total_days=100,
+        denmark_days=60,
+        vacation_days=10,
+        sick_days=5,
+        home_days=25,
+        compliance_pct=60.0,
+        is_compliant=True,
+        monthly_breakdown=[],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -216,3 +263,155 @@ def test_build_view_mounts_services():
     )
 
     assert storage in view.services
+
+
+# ---------------------------------------------------------------------------
+# build_view — summary route passes the annual summary through (Fix 2)
+# ---------------------------------------------------------------------------
+
+
+def test_build_view_summary_renders_annual_table_when_set():
+    state = _app_state()
+    state.compliance_summary = _summary()
+    state.annual_summary = _annual()
+    page = MagicMock(spec=ft.Page)
+    page.route = ROUTE_SUMMARY
+
+    view = build_view(
+        page,
+        ROUTE_SUMMARY,
+        state,
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+    )
+
+    # When the annual summary is present, the summary view renders a data table
+    # (the annual breakdown) rather than the "no annual summary" placeholder.
+    tables: list[ft.DataTable] = []
+
+    def _walk(node: object) -> None:
+        if isinstance(node, ft.DataTable):
+            tables.append(node)
+        content = getattr(node, "content", None)
+        if content is not None:
+            _walk(content)
+        for child in getattr(node, "controls", []) or []:
+            _walk(child)
+
+    for control in view.controls:
+        _walk(control)
+
+    assert tables, "expected an annual DataTable when state.annual_summary is set"
+
+
+def test_build_view_summary_no_annual_table_when_unset():
+    state = _app_state()
+    state.compliance_summary = _summary()
+    page = MagicMock(spec=ft.Page)
+    page.route = ROUTE_SUMMARY
+
+    view = build_view(
+        page,
+        ROUTE_SUMMARY,
+        state,
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+    )
+
+    tables: list[ft.DataTable] = []
+
+    def _walk(node: object) -> None:
+        if isinstance(node, ft.DataTable):
+            tables.append(node)
+        content = getattr(node, "content", None)
+        if content is not None:
+            _walk(content)
+        for child in getattr(node, "controls", []) or []:
+            _walk(child)
+
+    for control in view.controls:
+        _walk(control)
+
+    assert not tables
+
+
+# ---------------------------------------------------------------------------
+# load_annual_summary (Fix 2)
+# ---------------------------------------------------------------------------
+
+
+async def test_load_annual_summary_populates_state():
+    state = _app_state()
+    annual = _annual()
+    client = MagicMock()
+    client.get_annual_summary = AsyncMock(return_value=annual)
+
+    ok = await load_annual_summary(state, client)
+
+    assert ok is True
+    assert state.annual_summary is annual
+    client.get_annual_summary.assert_awaited_once_with(2025)
+
+
+async def test_load_annual_summary_swallows_api_error():
+    state = _app_state()
+    client = MagicMock()
+    client.get_annual_summary = AsyncMock(side_effect=APIError("down"))
+
+    ok = await load_annual_summary(state, client)
+
+    assert ok is False
+    assert state.annual_summary is None
+
+
+# ---------------------------------------------------------------------------
+# reset_for_new_backend (Fix 1)
+# ---------------------------------------------------------------------------
+
+
+async def test_reset_clears_stale_state_then_reloads_from_new_client():
+    # State was fetched from the OLD backend: a stale entry with id 999 and
+    # summaries. After reset the entries must come solely from the NEW client.
+    state = _app_state()
+    state.apply_entry(_entry(5, WorkLocation.HOME))
+    state.compliance_summary = _summary()
+    state.annual_summary = _annual()
+
+    new_entry = _entry(10, WorkLocation.DENMARK)
+    new_summary = _summary()
+    new_annual = _annual()
+    client = MagicMock()
+    client.get_entries = AsyncMock(return_value=[new_entry])
+    client.get_summary = AsyncMock(return_value=new_summary)
+    client.get_annual_summary = AsyncMock(return_value=new_annual)
+
+    await reset_for_new_backend(state, client)
+
+    # Stale entry gone; only the new backend's entry remains.
+    assert "2025-06-05" not in state.entries
+    assert state.entries == {"2025-06-10": new_entry}
+    assert state.compliance_summary is new_summary
+    assert state.annual_summary is new_annual
+    client.get_entries.assert_awaited_once_with(2025, 6)
+    client.get_annual_summary.assert_awaited_once_with(2025)
+
+
+async def test_reset_clears_stale_state_even_when_new_backend_down():
+    # If the new backend is unreachable, stale state must still be discarded so
+    # no edit/delete can send an old ID to the new backend.
+    state = _app_state()
+    state.apply_entry(_entry(5, WorkLocation.HOME))
+    state.compliance_summary = _summary()
+    state.annual_summary = _annual()
+
+    client = MagicMock()
+    client.get_entries = AsyncMock(side_effect=APIError("down"))
+    client.get_summary = AsyncMock(side_effect=APIError("down"))
+    client.get_annual_summary = AsyncMock(side_effect=APIError("down"))
+
+    await reset_for_new_backend(state, client)
+
+    # load_month preserves selected_month on failure but the stale entries were
+    # cleared before the fetch, so nothing from the old backend survives.
+    assert state.entries == {}
+    assert state.annual_summary is None

@@ -27,6 +27,7 @@ from app.views.settings_view import (
     load_api_base_url,
     save_api_base_url,
     validate_api_base_url,
+    warn_insecure_api_base_url,
 )
 
 
@@ -173,6 +174,98 @@ def test_validate_rejects_non_http_scheme():
 
 def test_validate_rejects_missing_host():
     assert validate_api_base_url("http://") is not None
+
+
+# ---------------------------------------------------------------------------
+# warn_insecure_api_base_url (Fix 3 — plain-http security warning)
+# ---------------------------------------------------------------------------
+
+
+def test_warn_flags_remote_http_host():
+    assert warn_insecure_api_base_url("http://example.com") is not None
+
+
+def test_warn_flags_remote_http_host_with_port():
+    assert warn_insecure_api_base_url("http://api.example.com:8080") is not None
+
+
+def test_warn_allows_https_remote_host():
+    assert warn_insecure_api_base_url("https://example.com") is None
+
+
+def test_warn_allows_http_localhost():
+    assert warn_insecure_api_base_url("http://localhost:8080") is None
+
+
+def test_warn_allows_http_loopback_ipv4():
+    assert warn_insecure_api_base_url("http://127.0.0.1:8080") is None
+
+
+def test_warn_allows_http_loopback_ipv4_block():
+    # Any address in 127.0.0.0/8 is loopback.
+    assert warn_insecure_api_base_url("http://127.0.0.5:8080") is None
+
+
+def test_warn_allows_http_loopback_ipv6():
+    assert warn_insecure_api_base_url("http://[::1]:8080") is None
+
+
+def test_warn_ignores_invalid_url():
+    # Invalid URLs are the hard validator's job; the warner stays quiet.
+    assert warn_insecure_api_base_url("not-a-url") is None
+
+
+# ---------------------------------------------------------------------------
+# save handler — non-blocking insecure-http warning (Fix 3)
+# ---------------------------------------------------------------------------
+
+
+async def test_save_handler_warns_but_saves_remote_http():
+    # A remote plain-http URL is valid, so it must still be persisted and
+    # on_saved invoked, but the user is warned via an amber snack bar and a
+    # helper text under the field.
+    page = MagicMock(spec=ft.Page)
+    storage = _fake_storage()
+    saved: list[str] = []
+    container = build_settings_view(
+        page,
+        storage,
+        current_value="http://example.com",
+        on_saved=saved.append,
+    )
+    field = _find_textfields(container)[0]
+    button = _find_save_button(container)
+
+    button.on_click(MagicMock())
+    await _run_captured_task(page)
+
+    storage.set.assert_awaited_once_with(API_BASE_URL_KEY, "http://example.com")
+    assert saved == ["http://example.com"]
+    assert field.error_text is None
+    assert field.helper_text is not None
+    page.show_dialog.assert_called_once()
+    snack = page.show_dialog.call_args.args[0]
+    assert isinstance(snack, ft.SnackBar)
+    # Distinct from the green success toast.
+    assert snack.bgcolor == ft.Colors.AMBER_700
+
+
+async def test_save_handler_no_warning_for_https():
+    page = MagicMock(spec=ft.Page)
+    storage = _fake_storage()
+    container = build_settings_view(
+        page, storage, current_value="https://api.example.com"
+    )
+    field = _find_textfields(container)[0]
+    button = _find_save_button(container)
+
+    button.on_click(MagicMock())
+    await _run_captured_task(page)
+
+    storage.set.assert_awaited_once()
+    assert field.helper_text is None
+    snack = page.show_dialog.call_args.args[0]
+    assert snack.bgcolor == ft.Colors.GREEN_700
 
 
 # ---------------------------------------------------------------------------

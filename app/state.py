@@ -5,6 +5,7 @@
 * ``entries`` — logged work entries keyed by ISO date (``"YYYY-MM-DD"``),
 * ``selected_month`` — the month currently displayed in the calendar,
 * ``compliance_summary`` — the latest compliance summary for that month,
+* ``annual_summary`` — the latest annual summary for the selected year,
 * ``is_loading`` — whether a backend request is in flight,
 * ``error_message`` — the current user-facing error, if any.
 
@@ -21,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import TYPE_CHECKING
 
-from app.api_client import ComplianceSummary, WorkEntry
+from app.api_client import AnnualSummary, ComplianceSummary, WorkEntry
 
 if TYPE_CHECKING:
     from app.views.home_view import ErrorAction
@@ -34,6 +35,7 @@ class AppState:
     selected_month: date
     entries: dict[str, WorkEntry] = field(default_factory=dict)
     compliance_summary: ComplianceSummary | None = None
+    annual_summary: AnnualSummary | None = None
     is_loading: bool = False
     error_message: str | None = None
     # The surface the latest error should be shown on (inline / banner /
