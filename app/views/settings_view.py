@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Protocol
+from urllib.parse import urlparse
 
 import flet as ft
 
@@ -104,6 +105,38 @@ async def save_api_base_url(storage: KeyValueStorage, value: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# validation (pure of the Flet runtime, so directly testable)
+# ---------------------------------------------------------------------------
+
+
+def validate_api_base_url(value: str) -> str | None:
+    """Validate an API base URL and return an error message, or ``None``.
+
+    A URL is considered valid only when it uses the ``http`` or ``https``
+    scheme and carries a non-empty hostname. Blank/empty input, a missing
+    scheme (e.g. ``"example.com"``), a non-HTTP scheme (e.g. ``"ftp://x"``),
+    and a missing host (e.g. ``"http://"``) are all rejected.
+
+    Args:
+        value: The raw URL entered by the user.
+
+    Returns:
+        A human-readable error message string when ``value`` is invalid, or
+        ``None`` when it is a usable ``http``/``https`` URL.
+    """
+    candidate = value.strip()
+    if not candidate:
+        return "Please enter an API base URL."
+
+    parsed = urlparse(candidate)
+    if parsed.scheme not in ("http", "https"):
+        return "URL must start with http:// or https://."
+    if not parsed.hostname:
+        return "URL must include a hostname."
+    return None
+
+
+# ---------------------------------------------------------------------------
 # view builder
 # ---------------------------------------------------------------------------
 
@@ -143,9 +176,26 @@ def build_settings_view(
 
     def _on_save(_e: ft.ControlEvent) -> None:
         async def _task() -> None:
-            normalised = await save_api_base_url(storage, url_field.value or "")
+            raw = url_field.value or ""
+            error = validate_api_base_url(raw)
+            if error is not None:
+                # Reject invalid input: surface the error inline and via a red
+                # snack bar, and do NOT persist anything.
+                url_field.error_text = error
+                page.show_dialog(
+                    ft.SnackBar(
+                        content=ft.Text(error, color=ft.Colors.WHITE),
+                        bgcolor=ft.Colors.RED_700,
+                    )
+                )
+                page.update()
+                return
+
+            # Valid: clear any prior error, normalise and persist.
+            url_field.error_text = None
+            normalised = await save_api_base_url(storage, raw)
             url_field.value = normalised
-            page.open(
+            page.show_dialog(
                 ft.SnackBar(
                     content=ft.Text("API URL saved.", color=ft.Colors.WHITE),
                     bgcolor=ft.Colors.GREEN_700,

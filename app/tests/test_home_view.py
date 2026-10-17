@@ -433,23 +433,96 @@ class TestHandleLongPress:
     def test_opens_dialog_for_logged_day(self) -> None:
         state = _state()
         state.apply_entry(_entry(10, WorkLocation.DENMARK))
-        page = MagicMock()
+        page = MagicMock(spec=ft.Page)
         refresh = MagicMock()
 
         _handle_long_press(page, state, MagicMock(), 10, refresh)
 
-        page.open.assert_called_once()
-        opened = page.open.call_args.args[0]
+        page.show_dialog.assert_called_once()
+        opened = page.show_dialog.call_args.args[0]
         assert isinstance(opened, ft.AlertDialog)
 
     def test_ignores_unlogged_day(self) -> None:
         state = _state()
-        page = MagicMock()
+        page = MagicMock(spec=ft.Page)
         refresh = MagicMock()
 
         _handle_long_press(page, state, MagicMock(), 15, refresh)
 
-        page.open.assert_not_called()
+        page.show_dialog.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Flet 1.0.2 Page API smoke tests (regression for page.open/page.close).
+#
+# These drive the dialog/snackbar/banner helpers against a ``MagicMock`` that
+# is *spec'd* to ``ft.Page``. Because Flet 1.0.2's ``ft.Page`` exposes
+# ``show_dialog``/``pop_dialog`` but NOT ``open``/``close``, a spec'd mock would
+# raise ``AttributeError`` the moment a helper tried to call the removed API —
+# so these tests fail loudly if the old API ever creeps back in.
+# ---------------------------------------------------------------------------
+
+
+class TestPageApiSmoke:
+    def test_ft_page_has_no_open_or_close(self) -> None:
+        # Guard the premise: the Flet 1.0.2 Page really has no open/close.
+        assert not hasattr(ft.Page, "open")
+        assert not hasattr(ft.Page, "close")
+        assert hasattr(ft.Page, "show_dialog")
+        assert hasattr(ft.Page, "pop_dialog")
+
+    def test_open_action_dialog_uses_show_dialog(self) -> None:
+        from app.views.home_view import _open_action_dialog
+
+        state = _state()
+        entry = _entry(10, WorkLocation.DENMARK)
+        page = MagicMock(spec=ft.Page)
+
+        _open_action_dialog(page, state, MagicMock(), entry, MagicMock())
+
+        page.show_dialog.assert_called_once()
+        assert isinstance(page.show_dialog.call_args.args[0], ft.AlertDialog)
+
+    def test_open_delete_confirm_uses_show_dialog(self) -> None:
+        from app.views.home_view import _open_delete_confirm
+
+        state = _state()
+        entry = _entry(10, WorkLocation.DENMARK)
+        page = MagicMock(spec=ft.Page)
+
+        _open_delete_confirm(page, state, MagicMock(), entry, MagicMock())
+
+        page.show_dialog.assert_called_once()
+        assert isinstance(page.show_dialog.call_args.args[0], ft.AlertDialog)
+
+    def test_dispatch_error_surface_banner_uses_show_dialog(self) -> None:
+        from app.views.home_view import ErrorAction, _dispatch_error_surface
+
+        state = _state()
+        state.error_action = ErrorAction.BANNER
+        state.error_message = "Could not connect."
+        page = MagicMock(spec=ft.Page)
+
+        _dispatch_error_surface(page, state, MagicMock(), MagicMock())
+
+        page.show_dialog.assert_called_once()
+        assert isinstance(page.show_dialog.call_args.args[0], ft.Banner)
+
+    def test_dialog_cancel_action_pops_dialog(self) -> None:
+        # The Cancel button handler must call pop_dialog() (no args), not the
+        # removed page.close(dialog) API.
+        from app.views.home_view import _open_action_dialog
+
+        state = _state()
+        entry = _entry(10, WorkLocation.DENMARK)
+        page = MagicMock(spec=ft.Page)
+
+        _open_action_dialog(page, state, MagicMock(), entry, MagicMock())
+        dialog = page.show_dialog.call_args.args[0]
+        cancel = dialog.actions[0]
+        cancel.on_click(MagicMock())
+
+        page.pop_dialog.assert_called_once_with()
 
 
 if __name__ == "__main__":  # pragma: no cover

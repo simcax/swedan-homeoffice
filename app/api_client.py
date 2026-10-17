@@ -191,7 +191,7 @@ class APIClient:
                     response = await http_method(url, **kwargs)
             except httpx.TimeoutException as exc:
                 raise APIError(f"Request to {url} timed out") from exc
-            except httpx.HTTPError as exc:  # pragma: no cover - defensive
+            except httpx.HTTPError as exc:
                 raise APIError(f"Request to {url} failed: {exc}") from exc
 
             if response.status_code == 503:

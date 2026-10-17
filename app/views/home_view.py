@@ -256,7 +256,13 @@ async def log_entry(
     try:
         entry = await api_client.post_entry(iso_date, location)
     except APIError as exc:
-        _record_error(state, classify_error(exc, context=iso_date))
+        # Only report a 422 as a future-date rejection when the resolved target
+        # date is actually in the future; otherwise the context would make
+        # every validation error read as "Cannot log a future date". For any
+        # other 422 fall back to the generic validation message.
+        is_future = target > date.today()  # noqa: DTZ011
+        context = iso_date if is_future else None
+        _record_error(state, classify_error(exc, context=context))
         return False
 
     # Success: apply the entry and refresh the compliance indicator.
@@ -555,8 +561,8 @@ def _log_button(location: WorkLocation, on_click) -> ft.Button:
 
 
 def _show_snack(page: ft.Page, message: str, *, color: str) -> None:
-    """Open a snack bar with ``message`` (Flet 1.0.2 ``page.open`` API)."""
-    page.open(
+    """Show a snack bar with ``message`` (Flet 1.0.2 ``page.show_dialog`` API)."""
+    page.show_dialog(
         ft.SnackBar(content=ft.Text(message, color=ft.Colors.WHITE), bgcolor=color)
     )
 
@@ -569,13 +575,12 @@ def _build_banner(page: ft.Page, message: str) -> ft.Banner:
     the message visible until the user dismisses it, while the underlying form
     values and calendar state are retained.
     """
-    banner = ft.Banner(
+    return ft.Banner(
         bgcolor=ft.Colors.RED_100,
         leading=ft.Icon(ft.Icons.WIFI_OFF, color=ft.Colors.RED_700),
         content=ft.Text(message, color=ft.Colors.RED_900),
+        actions=[ft.TextButton("Dismiss", on_click=lambda _e: page.pop_dialog())],
     )
-    banner.actions = [ft.TextButton("Dismiss", on_click=lambda _e: page.close(banner))]
-    return banner
 
 
 def _dispatch_error_surface(
@@ -615,7 +620,7 @@ def _dispatch_error_surface(
 
         page.run_task(_reload)
     elif action is ErrorAction.BANNER:
-        page.open(_build_banner(page, message))
+        page.show_dialog(_build_banner(page, message))
     elif action is ErrorAction.NOTIFICATION:
         _show_snack(page, message, color=ft.Colors.RED_700)
 
@@ -657,19 +662,19 @@ def _open_action_dialog(
     )
 
     def _edit(_e: ft.ControlEvent) -> None:
-        page.close(dialog)
+        page.pop_dialog()
         _open_edit_dialog(page, state, api_client, entry, refresh)
 
     def _delete(_e: ft.ControlEvent) -> None:
-        page.close(dialog)
+        page.pop_dialog()
         _open_delete_confirm(page, state, api_client, entry, refresh)
 
     dialog.actions = [
-        ft.TextButton("Cancel", on_click=lambda _e: page.close(dialog)),
+        ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
         ft.TextButton("Edit", on_click=_edit),
         ft.TextButton("Delete", on_click=_delete),
     ]
-    page.open(dialog)
+    page.show_dialog(dialog)
 
 
 def _open_delete_confirm(
@@ -690,7 +695,7 @@ def _open_delete_confirm(
     )
 
     def _confirm(_e: ft.ControlEvent) -> None:
-        page.close(dialog)
+        page.pop_dialog()
 
         async def _task() -> None:
             ok = await delete_entry(state, api_client, entry)
@@ -703,10 +708,10 @@ def _open_delete_confirm(
         page.run_task(_task)
 
     dialog.actions = [
-        ft.TextButton("Cancel", on_click=lambda _e: page.close(dialog)),
+        ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog()),
         ft.TextButton("Delete", on_click=_confirm),
     ]
-    page.open(dialog)
+    page.show_dialog(dialog)
 
 
 def _open_edit_dialog(
@@ -719,7 +724,7 @@ def _open_edit_dialog(
     """Show a location picker and PATCH the chosen value (Requirement 3.1)."""
 
     def _pick(location: WorkLocation) -> None:
-        page.close(dialog)
+        page.pop_dialog()
 
         async def _task() -> None:
             ok = await edit_entry(state, api_client, entry, location)
@@ -743,8 +748,8 @@ def _open_edit_dialog(
         content=options,
         actions=[],
     )
-    dialog.actions = [ft.TextButton("Cancel", on_click=lambda _e: page.close(dialog))]
-    page.open(dialog)
+    dialog.actions = [ft.TextButton("Cancel", on_click=lambda _e: page.pop_dialog())]
+    page.show_dialog(dialog)
 
 
 def _picker_button(location: WorkLocation, on_pick: Callable[[WorkLocation], None]):

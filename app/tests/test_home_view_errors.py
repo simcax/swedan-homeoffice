@@ -186,6 +186,41 @@ class Test422Inline:
         assert state.entries == {"2025-06-05": existing}
         client.get_summary.assert_not_awaited()
 
+    async def test_future_date_422_uses_date_adjacent_message(self) -> None:
+        # A 422 for a date strictly in the future keeps the future-date wording
+        # (the resolved target date is woven into the message).
+        state = _state()
+        client = MagicMock()
+        client.post_entry = AsyncMock(side_effect=_status_error(422))
+        client.get_summary = AsyncMock()
+
+        ok = await log_entry(
+            state, client, WorkLocation.DENMARK, work_date=date(2030, 1, 1)
+        )
+
+        assert ok is False
+        assert state.error_action is ErrorAction.INLINE
+        assert "future" in state.error_message.lower()
+        assert "2030-01-01" in state.error_message
+
+    async def test_non_future_date_422_uses_generic_message(self) -> None:
+        # A 422 for a date that is NOT in the future must fall back to the
+        # generic validation message, not the misleading future-date wording.
+        state = _state()
+        client = MagicMock()
+        client.post_entry = AsyncMock(side_effect=_status_error(422))
+        client.get_summary = AsyncMock()
+
+        ok = await log_entry(
+            state, client, WorkLocation.DENMARK, work_date=date(2024, 1, 1)
+        )
+
+        assert ok is False
+        assert state.error_action is ErrorAction.INLINE
+        assert "future" not in state.error_message.lower()
+        assert "2024-01-01" not in state.error_message
+        assert "not valid" in state.error_message
+
 
 # ---------------------------------------------------------------------------
 # 404 — snackbar + refresh (Requirement 9.2)

@@ -344,6 +344,28 @@ class TestTimeoutHandling:
 
 
 # ---------------------------------------------------------------------------
+# Error handling: connection error -> APIError (Requirement 9.4)
+# ---------------------------------------------------------------------------
+
+
+class TestConnectionErrorHandling:
+    async def test_connect_error_is_reraised_as_api_error(self) -> None:
+        # A non-timeout transport fault (e.g. connection refused) is the path
+        # that produces the connection-error banner in the view. It must be
+        # wrapped as a typed APIError rather than leaking the raw httpx error.
+        mock_get = AsyncMock(side_effect=httpx.ConnectError("connection refused"))
+
+        with patch("httpx.AsyncClient.get", mock_get):
+            client = APIClient(base_url=BASE_URL)
+            with pytest.raises(APIError):
+                await client.get_entries(2025, 6)
+
+    async def test_connect_error_api_error_is_not_an_httpx_error(self) -> None:
+        """The connection fault must be shielded behind the typed APIError."""
+        assert not issubclass(APIError, httpx.HTTPError)
+
+
+# ---------------------------------------------------------------------------
 # Error handling: 503 -> exponential back-off (Requirement 9.6)
 # ---------------------------------------------------------------------------
 
