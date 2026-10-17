@@ -1,0 +1,12 @@
+{
+  "apps": [
+    {
+      "app_id": "app_8b09d62f-bb19-423b-a87a-17ccf3b09783",
+      "org_id": "orga_45ba57a2-d0e3-476b-b2b8-afcde8d5e9f1",
+      "deploy_url": "https://push-n3-par-clevercloud-customers.services.clever-cloud.com/app_8b09d62f-bb19-423b-a87a-17ccf3b09783.git",
+      "git_ssh_url": "git+ssh://git@push-n3-par-clevercloud-customers.services.clever-cloud.com/app_8b09d62f-bb19-423b-a87a-17ccf3b09783.git",
+      "name": "swedan-homeoffice-backend",
+      "alias": "swedan-homeoffice-backend"
+    }
+  ]
+}
