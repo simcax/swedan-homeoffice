@@ -508,15 +508,20 @@ async def load_month(
     means the backend changed mid-request, so the write is skipped and the
     method returns ``False`` (Fix A). ``generation=None`` disables the guard.
     ``expected_month`` can additionally require that the selected month has not
-    changed while this load was in flight.
+    changed while this load was in flight. Each load also captures a monotonic
+    request token, so a superseded load is discarded even if navigation later
+    returns to the same month.
     """
+    state.month_load_generation += 1
+    request_generation = state.month_load_generation
+
     try:
         entries = await api_client.get_entries(year, month)
         summary = await api_client.get_summary(year, month)
     except APIError as exc:
         if _is_superseded(state, generation) or (
             expected_month is not None and state.selected_month != expected_month
-        ):
+        ) or state.month_load_generation != request_generation:
             return False
         _record_error(state, classify_error(exc))
         return False
@@ -524,7 +529,7 @@ async def load_month(
     # Guard the write: a backend switch during the request invalidates results.
     if _is_superseded(state, generation) or (
         expected_month is not None and state.selected_month != expected_month
-    ):
+    ) or state.month_load_generation != request_generation:
         return False
 
     year_changed = year != state.selected_month.year

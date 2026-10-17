@@ -227,6 +227,7 @@ def build_settings_view(
         label="API base URL",
         value=current_value,
         hint_text=DEFAULT_API_BASE_URL,
+        helper_text=warn_insecure_api_base_url(current_value),
         autofocus=True,
     )
 

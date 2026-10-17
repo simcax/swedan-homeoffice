@@ -181,6 +181,17 @@ def test_validate_rejects_missing_host():
 # ---------------------------------------------------------------------------
 
 
+def test_settings_view_warns_for_active_remote_http_url():
+    page = MagicMock(spec=ft.Page)
+    container = build_settings_view(
+        page, _fake_storage(), current_value="http://example.com"
+    )
+
+    field = _find_textfields(container)[0]
+
+    assert field.helper_text == warn_insecure_api_base_url("http://example.com")
+
+
 def test_warn_flags_remote_http_host():
     assert warn_insecure_api_base_url("http://example.com") is not None
 

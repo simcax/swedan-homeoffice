@@ -565,6 +565,54 @@ class TestPageApiSmoke:
 
 
 class TestBackendGenerationGuard:
+    async def test_older_month_load_is_discarded_after_navigating_away_and_back(
+        self,
+    ) -> None:
+        state = _state(month=6)
+        old_entry = _entry(5, WorkLocation.HOME, month=6)
+        new_entry = _entry(8, WorkLocation.DENMARK, month=6)
+        first_started = asyncio.Event()
+        release_first = asyncio.Event()
+        calls = 0
+
+        async def _entries(year: int, month: int):
+            nonlocal calls
+            call = calls
+            calls += 1
+            if call == 0:
+                first_started.set()
+                await release_first.wait()
+                return [old_entry]
+            return [new_entry if month == 6 else _entry(2, WorkLocation.HOME, month=7)]
+
+        client = MagicMock()
+        client.get_entries = AsyncMock(side_effect=_entries)
+        client.get_summary = AsyncMock(return_value=_summary())
+        generation = state.backend_generation
+        expected_june = date(2025, 6, 1)
+
+        old_load = asyncio.create_task(
+            load_month(
+                state,
+                client,
+                2025,
+                6,
+                generation=generation,
+                expected_month=expected_june,
+            )
+        )
+        await first_started.wait()
+
+        state.selected_month = date(2025, 7, 1)
+        assert await load_month(state, client, 2025, 7, generation=generation)
+        state.selected_month = expected_june
+        assert await load_month(state, client, 2025, 6, generation=generation)
+
+        release_first.set()
+        assert await old_load is False
+        assert state.selected_month == expected_june
+        assert state.entries == {"2025-06-08": new_entry}
+
     async def test_error_refresh_discards_result_after_backend_switch(self) -> None:
         from app.views.home_view import ErrorAction, _dispatch_error_surface
 

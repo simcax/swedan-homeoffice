@@ -11,6 +11,8 @@
 * ``backend_generation`` — a monotonic counter identifying the current
   backend "era", bumped whenever the configured backend changes so results
   from requests started under an earlier backend can be discarded.
+* ``month_load_generation`` — a request counter that prevents older month
+  loads from replacing newer navigation results.
 * ``annual_summary_generation`` — a request counter that prevents older
   overlapping annual-summary responses from replacing newer results.
 
@@ -54,6 +56,8 @@ class AppState:
     # writing results, so a request started under an earlier backend that
     # completes after a switch is discarded instead of writing stale IDs.
     backend_generation: int = 0
+    # Ensures the latest month-load request wins when navigation overlaps.
+    month_load_generation: int = 0
     # Ensures the latest annual-summary request wins when refreshes overlap.
     annual_summary_generation: int = 0
 
