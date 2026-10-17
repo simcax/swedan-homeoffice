@@ -54,5 +54,10 @@ The backend runs on Clever Cloud with these environment variables:
 |---|---|
 | `CC_PYTHON_UV_SYNC_FLAGS` | `--locked --no-progress` |
 | `CC_PYTHON_UV_RUN_COMMAND` | `.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8080` |
-| `CC_POST_BUILD_HOOK` | `uv run alembic upgrade head` |
+| `CC_POST_BUILD_HOOK` | `uv run alembic -c backend/alembic.ini upgrade head` |
 | `DATABASE_URL` | injected automatically by the PostgreSQL add-on |
+
+The post-build hook runs from the repository root, so Alembic is pointed at the
+config explicitly with `-c backend/alembic.ini`. Keeping the root as the working
+directory ensures `alembic/env.py` can `import backend` while still locating the
+migration scripts under `backend/alembic`.
