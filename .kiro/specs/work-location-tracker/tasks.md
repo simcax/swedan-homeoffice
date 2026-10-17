@@ -302,7 +302,7 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - `ft.TextField` for `API_BASE_URL`; persist to local storage via `page.client_storage`
     - _Requirements: 11.1_
 
-- [ ] 13. Implement `main.py` — Flet app entry point and routing
+- [x] 13. Implement `main.py` — Flet app entry point and routing
   - Wire `ft.app(main)` with route-based navigation between home, summary, and settings views
   - Initialise `AppState` and `APIClient` from `API_BASE_URL` env/storage on startup
   - _Requirements: 1.4, 5.1, 6.1, 7.1_

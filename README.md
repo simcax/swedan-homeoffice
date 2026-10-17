@@ -23,6 +23,32 @@ uv build                      # build distributable packages
 
 Python is pinned to `3.12` via `.python-version`.
 
+## Running the Flet app
+
+The `app/` package imports its modules via the `app.` prefix (e.g.
+`from app.api_client import APIClient`), so it must be launched as a module from
+the **workspace root** — not as a loose script. Running `uv run app/main.py`
+fails with `ModuleNotFoundError: No module named 'app'` because that puts `app/`
+itself on the import path.
+
+Run it one of these ways from the repository root:
+
+```bash
+uv run python -m app.main            # desktop window
+uv run flet run app/main.py          # Flet CLI (desktop + hot reload)
+uv run flet run app/main.py --web    # run in the browser
+```
+
+### Configuring the backend URL
+
+The app resolves its API base URL in this order: the `API_BASE_URL` environment
+variable, then the value saved in the Settings screen (local storage), then the
+default `http://127.0.0.1:8080`.
+
+```bash
+API_BASE_URL=https://your-backend.example.com uv run python -m app.main
+```
+
 ## CI/CD
 
 Two GitHub Actions workflows drive continuous integration and deployment:
