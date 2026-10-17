@@ -167,6 +167,9 @@ async def load_annual_summary(
         ``True`` when the annual summary was fetched and stored, ``False`` when
         the request failed (or was superseded) and the previous value was kept.
     """
+    if generation is not None and state.backend_generation != generation:
+        return False
+
     year = state.selected_month.year
     state.annual_summary_generation += 1
     request_generation = state.annual_summary_generation
@@ -247,14 +250,15 @@ def build_view(
     *,
     services: list[ft.Service] | None = None,
     on_settings_saved=None,
+    on_state_change=None,
 ) -> ft.View:
     """Build the :class:`ft.View` for ``route`` from the current state.
 
     The unknown-route fallback goes through :func:`resolve_initial_route`, so
     this never raises for a bad route — it renders the home screen instead.
     Each view carries a bottom :class:`ft.NavigationBar` so the user can move
-    between the three screens, and (when supplied) the ``services`` list so the
-    ``SharedPreferences`` storage service is mounted for the settings screen.
+    between the three screens, and (when supplied) the ``services`` list for
+    view-scoped Flet services.
 
     Args:
         page: The active Flet page.
@@ -266,6 +270,8 @@ def build_view(
             ``SharedPreferences``).
         on_settings_saved: Optional callback forwarded to the settings view and
             invoked with the normalised URL after a successful save.
+        on_state_change: Optional callback invoked after asynchronous home
+            operations update state, allowing the active route to be rebuilt.
 
     Returns:
         A configured :class:`ft.View` for the resolved route.
@@ -285,7 +291,9 @@ def build_view(
             on_saved=on_settings_saved,
         )
     else:
-        body = build_home_view(page, state, api_client)
+        body = build_home_view(
+            page, state, api_client, on_state_change=on_state_change
+        )
 
     return ft.View(
         route=resolved,
@@ -342,6 +350,8 @@ async def main(page: ft.Page) -> None:
     page.theme_mode = ft.ThemeMode.SYSTEM
 
     storage = ft.SharedPreferences()
+    page.services = [storage]
+    page.update()
 
     base_url = await resolve_base_url(storage=storage)
     state = AppState(selected_month=_first_of_this_month())
@@ -379,6 +389,7 @@ async def main(page: ft.Page) -> None:
                 storage,
                 services=[storage],
                 on_settings_saved=_on_settings_saved,
+                on_state_change=lambda: _render(page.route),
             )
         )
         page.update()

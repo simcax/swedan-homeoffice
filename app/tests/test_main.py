@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import flet as ft
 
+import app.main as app_main
 from app.api_client import (
     AnnualSummary,
     APIClient,
@@ -153,6 +154,92 @@ async def test_resolve_base_url_uses_storage_default_when_key_missing():
     result = await resolve_base_url(env={}, storage=storage)
 
     assert result == DEFAULT_API_BASE_URL
+
+
+async def test_main_mounts_storage_before_resolving_base_url(monkeypatch):
+    storage = ft.SharedPreferences()
+    page = MagicMock(spec=ft.Page)
+    page.route = ROUTE_HOME
+    page.services = []
+    events = []
+
+    monkeypatch.setattr(app_main.ft, "SharedPreferences", lambda: storage)
+
+    async def _resolve(*, storage):
+        assert page.services == [storage]
+        assert page.update.call_count == 1
+        events.append("resolve")
+        return DEFAULT_API_BASE_URL
+
+    monkeypatch.setattr(app_main, "resolve_base_url", _resolve)
+    monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
+
+    await app_main.main(page)
+
+    assert events == ["resolve"]
+    page.on_route_change(MagicMock(route=ROUTE_HOME))
+    home_view = page.views.append.call_args.args[0]
+    assert storage in home_view.services
+
+    page.on_route_change(MagicMock(route=ROUTE_SUMMARY))
+    summary_view = page.views.append.call_args.args[0]
+    assert storage in page.services
+    assert storage in summary_view.services
+
+
+async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch):
+    page = MagicMock(spec=ft.Page)
+    page.route = ROUTE_HOME
+    page.services = []
+    storage = ft.SharedPreferences()
+    client = MagicMock()
+    client.base_url = DEFAULT_API_BASE_URL
+    client.post_entry = AsyncMock(return_value=_entry(10))
+    client.get_summary = AsyncMock(return_value=_summary())
+    client.get_annual_summary = AsyncMock(return_value=_annual())
+
+    monkeypatch.setattr(app_main.ft, "SharedPreferences", lambda: storage)
+    monkeypatch.setattr(app_main, "resolve_base_url", AsyncMock(
+        return_value=DEFAULT_API_BASE_URL
+    ))
+    monkeypatch.setattr(app_main, "APIClient", lambda _url: client)
+    monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
+    monkeypatch.setattr(
+        app_main, "_first_of_this_month", lambda: date(2025, 6, 1)
+    )
+
+    await app_main.main(page)
+    page.on_route_change(MagicMock(route=ROUTE_HOME))
+    home_view = page.views.append.call_args.args[0]
+
+    buttons: list[ft.Button] = []
+
+    def _walk(control: object) -> None:
+        if isinstance(control, ft.Button):
+            buttons.append(control)
+        content = getattr(control, "content", None)
+        if content is not None:
+            _walk(content)
+        for child in getattr(control, "controls", []) or []:
+            _walk(child)
+
+    for control in home_view.controls:
+        _walk(control)
+    next(
+        button
+        for button in buttons
+        if button.data is WorkLocation.DENMARK
+    ).on_click(MagicMock())
+    operation = page.run_task.call_args.args[0]
+
+    page.route = ROUTE_SUMMARY
+    page.on_route_change(MagicMock(route=ROUTE_SUMMARY))
+    old_summary_view = page.views.append.call_args.args[0]
+    await operation()
+
+    updated_view = page.views.append.call_args.args[0]
+    assert updated_view.route == ROUTE_SUMMARY
+    assert updated_view is not old_summary_view
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +449,20 @@ async def test_load_annual_summary_swallows_api_error():
 
     assert ok is False
     assert state.annual_summary is None
+
+
+async def test_load_annual_summary_ignores_superseded_backend_before_request():
+    state = _app_state()
+    state.backend_generation = 2
+    state.annual_summary_generation = 4
+    client = MagicMock()
+    client.get_annual_summary = AsyncMock()
+
+    ok = await load_annual_summary(state, client, generation=1)
+
+    assert ok is False
+    assert state.annual_summary_generation == 4
+    client.get_annual_summary.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

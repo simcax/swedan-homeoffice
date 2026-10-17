@@ -347,6 +347,29 @@ class TestBuildHomeView:
         view = build_home_view(MagicMock(spec=ft.Page), _state(), MagicMock())
         assert any(isinstance(c, ft.GridView) for c in self._flatten(view))
 
+    async def test_state_change_callback_runs_after_home_operation(self) -> None:
+        page = MagicMock(spec=ft.Page)
+        state = _state()
+        changed = MagicMock()
+        client = MagicMock()
+        client.post_entry = AsyncMock(
+            return_value=_entry(10, WorkLocation.DENMARK)
+        )
+        client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
+
+        view = build_home_view(page, state, client, on_state_change=changed)
+        log_button = next(
+            button
+            for button in self._buttons(view)
+            if button.data is WorkLocation.DENMARK
+        )
+        log_button.on_click(MagicMock())
+        await page.run_task.call_args.args[0]()
+
+        changed.assert_called_once()
+        assert state.entries["2025-06-10"].location is WorkLocation.DENMARK
+
 
 # ---------------------------------------------------------------------------
 # delete_entry (task 12.3 — Requirements 4.2, 4.5, 4.6)
@@ -565,6 +588,20 @@ class TestPageApiSmoke:
 
 
 class TestBackendGenerationGuard:
+    async def test_stale_generation_does_not_start_annual_refresh(self) -> None:
+        from app.views.home_view import _refresh_annual
+
+        state = _state()
+        state.backend_generation = 2
+        state.annual_summary_generation = 4
+        client = MagicMock()
+        client.get_annual_summary = AsyncMock()
+
+        await _refresh_annual(state, client, generation=1)
+
+        assert state.annual_summary_generation == 4
+        client.get_annual_summary.assert_not_awaited()
+
     async def test_older_month_load_is_discarded_after_navigating_away_and_back(
         self,
     ) -> None:
@@ -902,6 +939,23 @@ class TestAnnualRefreshOnYearChange:
         assert state.selected_month == date(2026, 1, 1)
         client.get_annual_summary.assert_awaited_once_with(2026)
         assert state.annual_summary is annual_2026
+
+    async def test_failed_cross_year_refresh_clears_previous_year_summary(
+        self,
+    ) -> None:
+        state = _state(month=12)
+        state.selected_month = date(2025, 12, 1)
+        state.annual_summary = _annual(year=2025)
+        client = MagicMock()
+        client.get_entries = AsyncMock(return_value=[])
+        client.get_summary = AsyncMock(return_value=_summary(month=1))
+        client.get_annual_summary = AsyncMock(side_effect=APIError("down"))
+
+        ok = await load_month(state, client, 2026, 1)
+
+        assert ok is True
+        assert state.selected_month == date(2026, 1, 1)
+        assert state.annual_summary is None
 
     async def test_same_year_navigation_does_not_refresh_annual_summary(self) -> None:
         state = _state(month=6)

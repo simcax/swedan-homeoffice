@@ -283,6 +283,9 @@ async def _refresh_annual(
         api_client: The backend :class:`APIClient` to fetch from.
         generation: Optional backend generation guarding the write.
     """
+    if _is_superseded(state, generation):
+        return
+
     year = state.selected_month.year
     state.annual_summary_generation += 1
     request_generation = state.annual_summary_generation
@@ -542,6 +545,7 @@ async def load_month(
     # Crossing into a different year makes the cached annual summary stale;
     # refresh it best-effort for the newly selected year (Fix 2).
     if year_changed:
+        state.annual_summary = None
         await _refresh_annual(state, api_client, generation=generation)
 
     return True
@@ -563,6 +567,8 @@ def build_home_view(
     page: ft.Page,
     state: AppState,
     api_client: APIClient,
+    *,
+    on_state_change: Callable[[], None] | None = None,
 ) -> ft.Container:
     """Build the home calendar screen.
 
@@ -570,6 +576,8 @@ def build_home_view(
         page: The active Flet page; used to schedule async work and repaint.
         state: The shared in-memory :class:`AppState`.
         api_client: The backend :class:`APIClient`.
+        on_state_change: Optional router callback to rebuild the active screen
+            after asynchronous state changes.
 
     Returns:
         An :class:`ft.Container` holding the compliance bar, quick-log buttons,
@@ -607,7 +615,10 @@ def build_home_view(
 
         month_label.value = _month_title(state.selected_month)
         calendar_holder.content = _build_grid(state, _on_day_long_press)
-        page.update()
+        if on_state_change is None:
+            page.update()
+        else:
+            on_state_change()
 
     def _surface_error(ok: bool, generation: int) -> None:
         """Show the right UI surface for the latest error after an operation.
