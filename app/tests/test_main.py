@@ -396,6 +396,59 @@ async def test_reset_clears_stale_state_then_reloads_from_new_client():
     client.get_annual_summary.assert_awaited_once_with(2025)
 
 
+async def test_reset_bumps_generation_and_reloads_under_it():
+    # reset_for_new_backend opens a new backend era and threads that generation
+    # through the reload so late-arriving writes from the old era are dropped.
+    state = _app_state()
+    assert state.backend_generation == 0
+
+    new_entry = _entry(10, WorkLocation.DENMARK)
+    client = MagicMock()
+    client.get_entries = AsyncMock(return_value=[new_entry])
+    client.get_summary = AsyncMock(return_value=_summary())
+    client.get_annual_summary = AsyncMock(return_value=_annual())
+
+    await reset_for_new_backend(state, client)
+
+    # The generation was bumped exactly once and the reload populated state.
+    assert state.backend_generation == 1
+    assert state.entries == {"2025-06-10": new_entry}
+    assert state.annual_summary is not None
+
+
+async def test_reset_drops_stale_write_from_previous_generation():
+    # Simulate the temporal race: an OLD in-flight request finishes AFTER the
+    # reset bumped the generation and tries to write a stale entry. The guard
+    # must drop it so the stale ID never lands in state.
+    from app.views.home_view import load_month
+
+    state = _app_state()
+    captured_gen = state.backend_generation  # old era (0)
+
+    # New backend reload for the reset itself.
+    client = MagicMock()
+    client.get_entries = AsyncMock(return_value=[])
+    client.get_summary = AsyncMock(return_value=_summary())
+    client.get_annual_summary = AsyncMock(return_value=_annual())
+
+    await reset_for_new_backend(state, client)
+    assert state.backend_generation == 1
+    assert state.entries == {}
+
+    # Now the OLD request (started under generation 0) completes and tries to
+    # write a stale entry with an old ID.
+    stale = _entry(5, WorkLocation.HOME)
+    old_client = MagicMock()
+    old_client.get_entries = AsyncMock(return_value=[stale])
+    old_client.get_summary = AsyncMock(return_value=_summary())
+
+    ok = await load_month(state, old_client, 2025, 6, generation=captured_gen)
+
+    assert ok is False
+    # The stale entry from the previous generation was discarded.
+    assert state.entries == {}
+
+
 async def test_reset_clears_stale_state_even_when_new_backend_down():
     # If the new backend is unreachable, stale state must still be discarded so
     # no edit/delete can send an old ID to the new backend.

@@ -18,7 +18,13 @@ import flet as ft
 import httpx
 import pytest
 
-from app.api_client import APIError, ComplianceSummary, WorkEntry, WorkLocation
+from app.api_client import (
+    AnnualSummary,
+    APIError,
+    ComplianceSummary,
+    WorkEntry,
+    WorkLocation,
+)
 from app.state import AppState
 from app.views.home_view import (
     _BUTTON_COLORS,
@@ -62,6 +68,20 @@ def _summary(
     )
 
 
+def _annual(year: int = 2025) -> AnnualSummary:
+    return AnnualSummary(
+        year=year,
+        total_days=100,
+        denmark_days=60,
+        vacation_days=10,
+        sick_days=5,
+        home_days=25,
+        compliance_pct=60.0,
+        is_compliant=True,
+        monthly_breakdown=[],
+    )
+
+
 def _state(month: int = 6) -> AppState:
     return AppState(selected_month=date(2025, month, 1))
 
@@ -90,6 +110,7 @@ class TestLogEntrySuccess:
         client = MagicMock()
         client.post_entry = AsyncMock(return_value=posted)
         client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
 
         ok = await log_entry(
             state, client, WorkLocation.DENMARK, work_date=date(2025, 6, 10)
@@ -104,6 +125,7 @@ class TestLogEntrySuccess:
         client.post_entry = AsyncMock(return_value=_entry(10, WorkLocation.HOME))
         summary = _summary(compliance_pct=50.0)
         client.get_summary = AsyncMock(return_value=summary)
+        client.get_annual_summary = AsyncMock(return_value=_annual())
 
         await log_entry(state, client, WorkLocation.HOME, work_date=date(2025, 6, 10))
 
@@ -124,6 +146,7 @@ class TestLogEntrySuccess:
             )
         )
         client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
 
         await log_entry(state, client, WorkLocation.VACATION)
 
@@ -137,6 +160,7 @@ class TestLogEntrySuccess:
         client = MagicMock()
         client.post_entry = AsyncMock(return_value=_entry(10, WorkLocation.SICK))
         client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
 
         await log_entry(state, client, WorkLocation.SICK, work_date=date(2025, 6, 10))
 
@@ -336,6 +360,7 @@ class TestDeleteEntry:
         client = MagicMock()
         client.delete_entry = AsyncMock(return_value=None)
         client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
 
         ok = await delete_entry(state, client, entry)
 
@@ -351,6 +376,7 @@ class TestDeleteEntry:
         client.delete_entry = AsyncMock(return_value=None)
         summary = _summary(compliance_pct=40.0, is_compliant=False)
         client.get_summary = AsyncMock(return_value=summary)
+        client.get_annual_summary = AsyncMock(return_value=_annual())
 
         await delete_entry(state, client, entry)
 
@@ -387,6 +413,7 @@ class TestEditEntry:
         client = MagicMock()
         client.patch_entry = AsyncMock(return_value=updated)
         client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
 
         ok = await edit_entry(state, client, original, WorkLocation.DENMARK)
 
@@ -402,6 +429,7 @@ class TestEditEntry:
         client.patch_entry = AsyncMock(return_value=_entry(10, WorkLocation.VACATION))
         summary = _summary(compliance_pct=70.0)
         client.get_summary = AsyncMock(return_value=summary)
+        client.get_annual_summary = AsyncMock(return_value=_annual())
 
         await edit_entry(state, client, original, WorkLocation.VACATION)
 
@@ -523,6 +551,204 @@ class TestPageApiSmoke:
         cancel.on_click(MagicMock())
 
         page.pop_dialog.assert_called_once_with()
+
+
+# ---------------------------------------------------------------------------
+# Fix A — backend-generation guard against a superseded backend
+#
+# A request started under one backend "era" must not write its result into
+# state after a backend switch bumped ``state.backend_generation``. These tests
+# simulate the temporal race by having a mocked client method bump the
+# generation *before* returning, so the awaited result arrives already stale.
+# ---------------------------------------------------------------------------
+
+
+class TestBackendGenerationGuard:
+    async def test_load_month_discards_result_when_generation_bumped(self) -> None:
+        state = _state(month=6)
+        existing = _entry(5, WorkLocation.HOME, month=6)
+        state.apply_entry(existing)
+        gen = state.backend_generation
+
+        async def _entries(_year: int, _month: int):
+            # A backend switch happens while this request is in flight.
+            state.backend_generation += 1
+            return [_entry(3, WorkLocation.DENMARK, month=7)]
+
+        client = MagicMock()
+        client.get_entries = AsyncMock(side_effect=_entries)
+        client.get_summary = AsyncMock(return_value=_summary(month=7))
+
+        ok = await load_month(state, client, 2025, 7, generation=gen)
+
+        assert ok is False
+        # The stale result must NOT overwrite the current month/entries.
+        assert state.selected_month == date(2025, 6, 1)
+        assert state.entries == {"2025-06-05": existing}
+
+    async def test_log_entry_discards_result_when_generation_bumped(self) -> None:
+        state = _state()
+        gen = state.backend_generation
+
+        async def _post(_iso: str, _loc: WorkLocation):
+            state.backend_generation += 1
+            return _entry(10, WorkLocation.DENMARK)
+
+        client = MagicMock()
+        client.post_entry = AsyncMock(side_effect=_post)
+        client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
+
+        ok = await log_entry(
+            state,
+            client,
+            WorkLocation.DENMARK,
+            work_date=date(2025, 6, 10),
+            generation=gen,
+        )
+
+        assert ok is False
+        # Stale entry must not land, and the summary must not be refreshed.
+        assert state.entries == {}
+        client.get_summary.assert_not_awaited()
+
+    async def test_matching_generation_allows_the_write(self) -> None:
+        state = _state()
+        posted = _entry(10, WorkLocation.DENMARK)
+        client = MagicMock()
+        client.post_entry = AsyncMock(return_value=posted)
+        client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
+
+        ok = await log_entry(
+            state,
+            client,
+            WorkLocation.DENMARK,
+            work_date=date(2025, 6, 10),
+            generation=state.backend_generation,
+        )
+
+        assert ok is True
+        assert state.entries["2025-06-10"] is posted
+
+    async def test_generation_none_keeps_legacy_behaviour(self) -> None:
+        state = _state(month=6)
+        client = MagicMock()
+        client.get_entries = AsyncMock(
+            return_value=[_entry(3, WorkLocation.DENMARK, month=7)]
+        )
+        client.get_summary = AsyncMock(return_value=_summary(month=7))
+        client.get_annual_summary = AsyncMock(return_value=_annual())
+
+        # No generation passed: writes happen unconditionally even if the
+        # counter changes (the guard is disabled).
+        state.backend_generation = 99
+        ok = await load_month(state, client, 2025, 7)
+
+        assert ok is True
+        assert state.selected_month == date(2025, 7, 1)
+        assert "2025-07-03" in state.entries
+
+
+# ---------------------------------------------------------------------------
+# Fix B — annual-summary refresh after mutations and on year change
+# ---------------------------------------------------------------------------
+
+
+class TestAnnualRefreshOnMutation:
+    async def test_log_entry_refreshes_annual_summary(self) -> None:
+        state = _state()
+        client = MagicMock()
+        client.post_entry = AsyncMock(return_value=_entry(10, WorkLocation.DENMARK))
+        client.get_summary = AsyncMock(return_value=_summary())
+        annual = _annual()
+        client.get_annual_summary = AsyncMock(return_value=annual)
+
+        await log_entry(
+            state, client, WorkLocation.DENMARK, work_date=date(2025, 6, 10)
+        )
+
+        assert state.annual_summary is annual
+        client.get_annual_summary.assert_awaited_once_with(2025)
+
+    async def test_delete_entry_refreshes_annual_summary(self) -> None:
+        state = _state()
+        entry = _entry(10, WorkLocation.DENMARK)
+        state.apply_entry(entry)
+        client = MagicMock()
+        client.delete_entry = AsyncMock(return_value=None)
+        client.get_summary = AsyncMock(return_value=_summary())
+        annual = _annual()
+        client.get_annual_summary = AsyncMock(return_value=annual)
+
+        await delete_entry(state, client, entry)
+
+        assert state.annual_summary is annual
+        client.get_annual_summary.assert_awaited_once_with(2025)
+
+    async def test_edit_entry_refreshes_annual_summary(self) -> None:
+        state = _state()
+        original = _entry(10, WorkLocation.HOME)
+        state.apply_entry(original)
+        client = MagicMock()
+        client.patch_entry = AsyncMock(return_value=_entry(10, WorkLocation.DENMARK))
+        client.get_summary = AsyncMock(return_value=_summary())
+        annual = _annual()
+        client.get_annual_summary = AsyncMock(return_value=annual)
+
+        await edit_entry(state, client, original, WorkLocation.DENMARK)
+
+        assert state.annual_summary is annual
+        client.get_annual_summary.assert_awaited_once_with(2025)
+
+    async def test_failed_annual_refresh_does_not_fail_the_mutation(self) -> None:
+        state = _state()
+        previous = _annual()
+        state.annual_summary = previous
+        client = MagicMock()
+        client.post_entry = AsyncMock(return_value=_entry(10, WorkLocation.DENMARK))
+        client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(side_effect=_api_error(503))
+
+        ok = await log_entry(
+            state, client, WorkLocation.DENMARK, work_date=date(2025, 6, 10)
+        )
+
+        # The mutation still succeeds and the previous annual summary is kept.
+        assert ok is True
+        assert state.annual_summary is previous
+
+
+class TestAnnualRefreshOnYearChange:
+    async def test_cross_year_navigation_refreshes_annual_summary(self) -> None:
+        # Navigate from Dec 2025 into Jan 2026: the year changes, so the annual
+        # summary must be refreshed for the new year.
+        state = _state(month=12)
+        state.selected_month = date(2025, 12, 1)
+        client = MagicMock()
+        client.get_entries = AsyncMock(return_value=[])
+        client.get_summary = AsyncMock(return_value=_summary(month=1))
+        annual_2026 = _annual(year=2026)
+        client.get_annual_summary = AsyncMock(return_value=annual_2026)
+
+        ok = await load_month(state, client, 2026, 1)
+
+        assert ok is True
+        assert state.selected_month == date(2026, 1, 1)
+        client.get_annual_summary.assert_awaited_once_with(2026)
+        assert state.annual_summary is annual_2026
+
+    async def test_same_year_navigation_does_not_refresh_annual_summary(self) -> None:
+        state = _state(month=6)
+        client = MagicMock()
+        client.get_entries = AsyncMock(return_value=[])
+        client.get_summary = AsyncMock(return_value=_summary(month=7))
+        client.get_annual_summary = AsyncMock(return_value=_annual())
+
+        ok = await load_month(state, client, 2025, 7)
+
+        assert ok is True
+        client.get_annual_summary.assert_not_awaited()
 
 
 if __name__ == "__main__":  # pragma: no cover

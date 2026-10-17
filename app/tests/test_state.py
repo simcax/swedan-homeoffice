@@ -95,6 +95,11 @@ class TestInitialState:
 
         assert state.annual_summary is None
 
+    def test_initial_backend_generation_is_zero(self) -> None:
+        state = AppState(selected_month=date(2025, 6, 1))
+
+        assert state.backend_generation == 0
+
     def test_each_instance_gets_its_own_entries_dict(self) -> None:
         """A mutable default must not be shared between instances."""
         first = AppState(selected_month=date(2025, 6, 1))

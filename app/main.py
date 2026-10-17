@@ -139,7 +139,12 @@ def resolve_initial_route(route: str | None) -> str:
     return ROUTE_HOME
 
 
-async def load_annual_summary(state: AppState, api_client: APIClient) -> bool:
+async def load_annual_summary(
+    state: AppState,
+    api_client: APIClient,
+    *,
+    generation: int | None = None,
+) -> bool:
     """Best-effort load of the annual summary for the selected year.
 
     Fetches ``api_client.get_annual_summary`` for ``state.selected_month.year``
@@ -148,20 +153,31 @@ async def load_annual_summary(state: AppState, api_client: APIClient) -> bool:
     backend is unreachable, mirroring :func:`_load_initial_data`'s best-effort
     behaviour.
 
+    When ``generation`` is given it is re-checked against
+    ``state.backend_generation`` immediately before writing the result; a
+    mismatch means the backend changed while the request was in flight, so the
+    stale result is discarded and the method returns ``False`` (Fix A).
+    ``generation=None`` disables the guard, keeping existing call sites
+    unchanged.
+
     Args:
         state: The shared in-memory :class:`AppState` to populate.
         api_client: The backend :class:`APIClient` to fetch from.
+        generation: Optional backend generation guarding the write.
 
     Returns:
         ``True`` when the annual summary was fetched and stored, ``False`` when
-        the request failed (and the previous value was kept).
+        the request failed (or was superseded) and the previous value was kept.
     """
     try:
-        state.annual_summary = await api_client.get_annual_summary(
-            state.selected_month.year
-        )
+        annual = await api_client.get_annual_summary(state.selected_month.year)
     except APIError:
         return False
+
+    if generation is not None and state.backend_generation != generation:
+        return False
+
+    state.annual_summary = annual
     return True
 
 
@@ -176,6 +192,14 @@ async def reset_for_new_backend(state: AppState, api_client: APIClient) -> None:
     :func:`app.views.home_view.load_month`) and the annual summary (via
     :func:`load_annual_summary`) against the new ``api_client``.
 
+    To close the *temporal* race a bare URL comparison cannot — a request
+    already in flight against the old client may finish *after* this reset and
+    write old entries (with old IDs) back into state — the backend generation
+    counter is bumped first. The captured ``gen`` is threaded through the
+    reloads, and every guarded load/mutation coroutine re-checks it before
+    committing, so any late-arriving write from the previous generation is
+    dropped instead of resurrecting stale IDs (Fix A).
+
     The reload is best-effort: ``load_month`` records any error on ``state`` and
     the annual fetch is swallowed, so the UI still renders if the new backend is
     unreachable. The helper is pure of the Flet runtime so it can be unit-tested
@@ -186,6 +210,11 @@ async def reset_for_new_backend(state: AppState, api_client: APIClient) -> None:
         api_client: The newly configured backend :class:`APIClient`.
     """
     from app.views.home_view import load_month
+
+    # Open a new backend era: any in-flight request from the previous
+    # generation will fail its guard check and have its write discarded.
+    state.backend_generation += 1
+    gen = state.backend_generation
 
     # Drop everything fetched from the old backend before any edit/delete can
     # target the new one with a stale ID.
@@ -198,8 +227,9 @@ async def reset_for_new_backend(state: AppState, api_client: APIClient) -> None:
         api_client,
         state.selected_month.year,
         state.selected_month.month,
+        generation=gen,
     )
-    await load_annual_summary(state, api_client)
+    await load_annual_summary(state, api_client, generation=gen)
 
 
 def build_view(
