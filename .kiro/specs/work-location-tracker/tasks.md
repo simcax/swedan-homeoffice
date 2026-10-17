@@ -270,8 +270,8 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Render one `entry_tile` per day in the month; wire long-press handler for edit/delete
     - _Requirements: 5.1, 8.2_
 
-- [ ] 12. Implement Flet views and event handlers
-  - [ ] 12.1 Implement `home_view.py` — main calendar screen
+- [x] 12. Implement Flet views and event handlers
+  - [x] 12.1 Implement `home_view.py` — main calendar screen
     - Four `ft.ElevatedButton` controls for logging (Denmark/Home/Vacation/Sick) with correct `bgcolor` values
     - On button click: call `api_client.post_entry`, update `state.entries`, refresh `compliance_summary`, call `page.update()`
     - On error: display inline error message; preserve calendar state
@@ -279,18 +279,18 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Month navigation arrows call `api_client.get_entries` for the new month
     - _Requirements: 1.1, 1.4, 1.5, 2.3, 2.4, 2.5, 8.1, 8.2, 13.1, 13.5, 13.6, 14.1, 14.5, 14.6_
 
-  - [ ] 12.2 Implement `summary_view.py` — monthly and annual summary screen
+  - [x] 12.2 Implement `summary_view.py` — monthly and annual summary screen
     - Render `ComplianceSummary` fields (total, denmark, vacation, sick, home, compliance %) in a card
     - Render annual summary with 12-month breakdown table
     - _Requirements: 6.1, 7.1, 8.1, 8.3, 8.4_
 
-  - [ ] 12.3 Implement edit/delete flow in `home_view.py`
+  - [x] 12.3 Implement edit/delete flow in `home_view.py`
     - Long-press on a calendar tile opens `ft.AlertDialog` with Edit and Delete options
     - Delete path: show confirmation dialog before sending DELETE; on success clear tile; on error show snack bar and keep tile
     - Edit path: show location picker dialog; on confirm send PATCH; on success update tile within 2 seconds; on error show snack bar
     - _Requirements: 3.1, 3.5, 3.6, 4.1, 4.2, 4.5, 4.6_
 
-  - [ ] 12.4 Implement API error handling in views
+  - [x] 12.4 Implement API error handling in views
     - 422 → inline validation message, retain form values, no navigation
     - 404 → `ft.SnackBar` toast, refresh entry list
     - 409 → delegate to `APIClient` retry; if PATCH also fails show error notification
@@ -298,7 +298,7 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - 503 → delegate to `APIClient` back-off; if all fail show error notification
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6_
 
-  - [ ] 12.5 Implement `settings_view.py` — API URL configuration
+  - [x] 12.5 Implement `settings_view.py` — API URL configuration
     - `ft.TextField` for `API_BASE_URL`; persist to local storage via `page.client_storage`
     - _Requirements: 11.1_
 

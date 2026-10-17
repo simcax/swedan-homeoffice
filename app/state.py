@@ -19,8 +19,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from typing import TYPE_CHECKING
 
 from app.api_client import ComplianceSummary, WorkEntry
+
+if TYPE_CHECKING:
+    from app.views.home_view import ErrorAction
 
 
 @dataclass
@@ -32,6 +36,11 @@ class AppState:
     compliance_summary: ComplianceSummary | None = None
     is_loading: bool = False
     error_message: str | None = None
+    # The surface the latest error should be shown on (inline / banner /
+    # snackbar+refresh / notification). ``None`` when there is no active error.
+    # Populated by the view layer's error classifier (see
+    # ``app.views.home_view.classify_error``).
+    error_action: ErrorAction | None = None
 
     def apply_entry(self, entry: WorkEntry) -> None:
         """Insert or replace ``entry`` keyed by its ISO date string.
@@ -42,5 +51,6 @@ class AppState:
         self.entries[entry.work_date.isoformat()] = entry
 
     def clear_error(self) -> None:
-        """Reset ``error_message`` to ``None`` (idempotent)."""
+        """Reset ``error_message`` and ``error_action`` to ``None`` (idempotent)."""
         self.error_message = None
+        self.error_action = None

@@ -188,23 +188,30 @@ backend/
 # entries router
 router = APIRouter(prefix="/api/v1/entries", tags=["entries"])
 
+
 @router.get("/", response_model=list[WorkEntryResponse])
 async def list_entries(year: int, month: int, db: AsyncSession): ...
+
 
 @router.post("/", response_model=WorkEntryResponse, status_code=201)
 async def create_entry(body: WorkEntryCreate, db: AsyncSession): ...
 
+
 @router.patch("/{entry_id}", response_model=WorkEntryResponse)
 async def update_entry(entry_id: int, body: WorkEntryUpdate, db: AsyncSession): ...
+
 
 @router.delete("/{entry_id}", status_code=204)
 async def delete_entry(entry_id: int, db: AsyncSession): ...
 
+
 # summary router
 router = APIRouter(prefix="/api/v1/summary", tags=["summary"])
 
+
 @router.get("/monthly", response_model=ComplianceSummaryResponse)
 async def monthly_summary(year: int, month: int, db: AsyncSession): ...
+
 
 @router.get("/annual", response_model=AnnualSummaryResponse)
 async def annual_summary(year: int, db: AsyncSession): ...
@@ -223,6 +230,7 @@ class EntryService:
     async def upsert_entry(self, date: date, location: WorkLocation) -> WorkEntry: ...
     async def get_entries_for_month(self, year: int, month: int) -> list[WorkEntry]: ...
     async def delete_entry(self, entry_id: int) -> None: ...
+
 
 class ComplianceService:
     def calculate_monthly(self, entries: list[WorkEntry]) -> ComplianceSummary: ...
@@ -262,7 +270,7 @@ class WorkEntry(Base):
     work_date: Mapped[date] = mapped_column(Date, nullable=False, unique=True)
     location: Mapped[str] = mapped_column(
         Enum("home", "denmark", "vacation", "sick", name="work_location_enum"),
-        nullable=False
+        nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -288,6 +296,7 @@ class WorkLocation(str, Enum):
     VACATION = "vacation"
     SICK = "sick"
 
+
 class WorkEntryCreate(BaseModel):
     work_date: date
     location: WorkLocation
@@ -299,8 +308,10 @@ class WorkEntryCreate(BaseModel):
             raise ValueError("Cannot log a future date")
         return v
 
+
 class WorkEntryUpdate(BaseModel):
     location: WorkLocation
+
 
 class WorkEntryResponse(BaseModel):
     id: int
@@ -311,6 +322,7 @@ class WorkEntryResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
 class ComplianceSummary(BaseModel):
     year: int
     month: int
@@ -320,7 +332,8 @@ class ComplianceSummary(BaseModel):
     sick_days: int
     home_days: int
     compliance_pct: float  # 0.0 – 100.0
-    is_compliant: bool     # True when compliance_pct >= 50.0
+    is_compliant: bool  # True when compliance_pct >= 50.0
+
 
 class AnnualSummary(BaseModel):
     year: int
@@ -544,6 +557,7 @@ from app.api_client import APIClient
 from app.state import AppState
 from app.schemas import WorkLocation
 
+
 async def on_denmark_clicked(e: ft.ControlEvent, state: AppState, client: APIClient):
     today = date.today().isoformat()
     entry = await client.post_entry(date=today, location=WorkLocation.DENMARK)
@@ -553,6 +567,7 @@ async def on_denmark_clicked(e: ft.ControlEvent, state: AppState, client: APICli
         month=state.selected_month.month,
     )
     e.page.update()
+
 
 def build_log_buttons(state: AppState, client: APIClient) -> ft.Row:
     return ft.Row(
@@ -595,7 +610,7 @@ async def create_entry(
     db: AsyncSession = Depends(get_session),
 ) -> WorkEntryResponse:
     repo = EntryRepository(db)
-    svc  = EntryService(repo)
+    svc = EntryService(repo)
     entry = await svc.upsert_entry(body.work_date, body.location)
     return WorkEntryResponse.model_validate(entry)
 ```
@@ -613,7 +628,7 @@ async def create_entry(
     "sick_days": 1,
     "home_days": 4,
     "compliance_pct": 80.0,
-    "is_compliant": true
+    "is_compliant": true,
 }
 ```
 
@@ -772,6 +787,7 @@ def test_calculate_monthly_empty_entries_returns_zero():
 ```python
 from hypothesis import given, strategies as st
 
+
 @given(
     denmark=st.integers(min_value=0, max_value=100),
     vacation=st.integers(min_value=0, max_value=100),
@@ -789,7 +805,10 @@ def test_compliance_partition_property(denmark, vacation, sick, home):
     svc = ComplianceService()
     result = svc.calculate_monthly(entries)
 
-    assert result.denmark_days + result.vacation_days + result.sick_days + result.home_days == result.total_days
+    assert (
+        result.denmark_days + result.vacation_days + result.sick_days + result.home_days
+        == result.total_days
+    )
 ```
 
 ### Integration Testing (pytest + async + real DB)
