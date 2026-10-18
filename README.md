@@ -49,6 +49,53 @@ default `http://127.0.0.1:8080`.
 API_BASE_URL=https://your-backend.example.com uv run python -m app.main
 ```
 
+## Running the full stack locally
+
+The quickest way to try the app end to end is the dev script, which starts a
+PostgreSQL database (Docker), runs migrations, starts the backend, then launches
+the Flet app:
+
+```bash
+scripts/dev.sh            # database + backend + Flet app
+scripts/dev.sh --no-app   # database + backend only (e.g. to curl the API)
+```
+
+Ctrl-C stops the backend the script started; the database keeps running in the
+background. Stop and keep data with `docker compose down`, or wipe it with
+`docker compose down -v`.
+
+### Doing it by hand
+
+If you'd rather run each piece yourself:
+
+```bash
+# 1. Start PostgreSQL (bundled docker-compose service)
+docker compose up -d db
+
+# 2. Start the backend. The backend reads DATABASE_URL from the process
+#    environment ONLY — it does not auto-load .env (by design, Requirement 11.1).
+DATABASE_URL=postgresql://wlt:wlt@127.0.0.1:5432/wlt \
+  uv run uvicorn backend.main:app --host 127.0.0.1 --port 8080 --reload
+
+# 3. Start the Flet app (defaults to http://127.0.0.1:8080)
+uv run python -m app.main
+```
+
+> `uv run python -m backend.main` does **not** start the server — `backend/main.py`
+> only exposes the ASGI `app`; it must be served by uvicorn as shown above.
+
+### Environment variables
+
+Copy `.env.example` to `.env` and fill in values as needed. `.env` is gitignored
+and must never be committed. Because the backend does not read `.env`
+automatically, either use `scripts/dev.sh` (which exports the values) or export
+them yourself: `set -a; source .env; set +a`.
+
+| Variable | Purpose | Local default |
+|---|---|---|
+| `DATABASE_URL` | Backend PostgreSQL connection string | `postgresql://wlt:wlt@127.0.0.1:5432/wlt` |
+| `API_BASE_URL` | URL the Flet app targets | `http://127.0.0.1:8080` |
+
 ## CI/CD
 
 Two GitHub Actions workflows drive continuous integration and deployment:
