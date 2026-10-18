@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from backend.config import Settings
+from backend.config import DatabaseConfigurationError, Settings
 
 logger = logging.getLogger(__name__)
 

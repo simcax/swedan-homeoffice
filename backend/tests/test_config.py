@@ -130,7 +130,7 @@ class TestAddonFallback:
 class TestNoConfiguration:
     def test_raises_when_no_source_present(self) -> None:
         with pytest.raises(DatabaseConfigurationError):
-            Settings().effective_database_url
+            _ = Settings().effective_database_url
 
     def test_raises_when_addon_parts_incomplete(
         self, monkeypatch: pytest.MonkeyPatch
@@ -139,7 +139,7 @@ class TestNoConfiguration:
         monkeypatch.setenv("POSTGRESQL_ADDON_HOST", "addon-host")
 
         with pytest.raises(DatabaseConfigurationError):
-            Settings().effective_database_url
+            _ = Settings().effective_database_url
 
 
 class TestUnrelatedEnvIgnored:
