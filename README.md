@@ -134,3 +134,23 @@ The post-build hook runs from the repository root, so Alembic is pointed at the
 config explicitly with `-c backend/alembic.ini`. Keeping the root as the working
 directory ensures `alembic/env.py` can `import backend` while still locating the
 migration scripts under `backend/alembic`.
+
+### Migrations run once, before serving
+
+`alembic upgrade head` runs **only** as this pre-start hook — it is **not** run
+from the FastAPI lifespan. Running it in the lifespan would race when more than
+one process starts at once (multiple uvicorn workers, or `--reload`'s reloader
+plus worker), each calling `upgrade head` against the same database
+concurrently. As a single pre-start step the schema is brought current exactly
+once before any instance serves.
+
+The equivalent of the post-build hook, with `DATABASE_URL` validation and a
+non-zero exit on failure, is also available as a module entry point:
+
+```bash
+uv run python -m backend.migrate
+```
+
+The FastAPI app still validates `DATABASE_URL` on startup (and aborts if it is
+missing), so a mis-configured deployment still fails fast — it just no longer
+migrates from inside the request-serving processes.
