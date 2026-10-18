@@ -451,7 +451,37 @@ async def main(page: ft.Page) -> None:
             on_state_change=lambda: _render(page.route),
         )
 
+    # Idempotency guard for the initial paint. Startup renders the first view
+    # DIRECTLY (see below), but in some Flet versions ``on_route_change`` *also*
+    # fires at launch for that same route. Without a guard the first view would
+    # build twice — harmless to display, but it kicks off a duplicate set of
+    # initial data loads.
+    #
+    # The guard makes the *first* initial-route paint happen exactly once,
+    # whichever path reaches it first (a launch-time ``on_route_change`` during
+    # the ``_load_initial_data`` await, or the direct render afterwards), and
+    # suppresses the other. Every genuine navigation (any other route, or a
+    # change after the initial paint) renders normally.
+    initial_route = resolve_initial_route(page.route)
+    initial_render_done = False
+
+    def _render_initial(route: str) -> None:
+        # Paint the initial view at most once. The first caller wins; a second
+        # launch-time call for the same startup route is a no-op.
+        nonlocal initial_render_done
+        if initial_render_done:
+            return
+        initial_render_done = True
+        _render(route)
+
     def _on_route_change(e: ft.RouteChangeEvent) -> None:
+        nonlocal initial_render_done
+        if not initial_render_done and e.route == initial_route:
+            # Launch-time echo of the initial route: perform the one initial
+            # paint through the guarded path rather than re-rendering.
+            _render_initial(e.route)
+            return
+        initial_render_done = True
         _render(e.route)
 
     page.on_route_change = _on_route_change
@@ -463,8 +493,9 @@ async def main(page: ft.Page) -> None:
     # Perform the initial render DIRECTLY (not via page.navigate). This builds
     # and shows the first view regardless of whether on_route_change fires,
     # which it may not when the launch route already equals the current route
-    # ("/"). on_route_change (installed above) handles later navigation.
-    _render(resolve_initial_route(page.route))
+    # ("/"). The guard ensures the first view is built exactly once even if a
+    # launch-time on_route_change for the same route also arrives.
+    _render_initial(initial_route)
 
 
 async def _load_initial_data(state: AppState, api_client: APIClient) -> None:

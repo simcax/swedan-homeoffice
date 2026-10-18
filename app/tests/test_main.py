@@ -248,6 +248,134 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
 
 
 # ---------------------------------------------------------------------------
+# Initial-render idempotency guard (double-render regression)
+# ---------------------------------------------------------------------------
+#
+# ``main`` paints the first view DIRECTLY at startup AND registers an
+# ``on_route_change`` handler. In some Flet versions ``on_route_change`` also
+# fires at launch for the same route, which would build the first view twice
+# and kick off a duplicate set of initial data loads. These tests count calls
+# into ``initial_render`` (the single rendering primitive both paths delegate
+# to) to assert the initial paint happens exactly once.
+
+
+def _render_counting_page(route: str = ROUTE_HOME) -> MagicMock:
+    page = MagicMock(spec=ft.Page)
+    page.route = route
+    page.services = []
+    page.views = MagicMock()
+    return page
+
+
+async def _run_main_with_counted_render(monkeypatch, page) -> list[str | None]:
+    """Run ``main`` with ``initial_render`` replaced by a call recorder.
+
+    Returns the list of ``route`` values each ``initial_render`` call rendered,
+    so a test can assert how many times — and for which routes — the view was
+    painted.
+    """
+    storage = ft.SharedPreferences()
+    rendered: list[str | None] = []
+
+    monkeypatch.setattr(app_main.ft, "SharedPreferences", lambda: storage)
+    monkeypatch.setattr(
+        app_main, "resolve_base_url", AsyncMock(return_value=DEFAULT_API_BASE_URL)
+    )
+    monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
+
+    def _record_render(_page, _state, _client, _storage, *, route=None, **_kwargs):
+        rendered.append(route)
+
+    monkeypatch.setattr(app_main, "initial_render", _record_render)
+
+    await app_main.main(page)
+    return rendered
+
+
+async def test_initial_render_happens_once_without_launch_route_change(monkeypatch):
+    # Baseline: no launch-time on_route_change. The direct startup render paints
+    # the initial route exactly once.
+    page = _render_counting_page(ROUTE_HOME)
+
+    rendered = await _run_main_with_counted_render(monkeypatch, page)
+
+    assert rendered == [ROUTE_HOME]
+
+
+class _EchoingPage:
+    """Minimal page double that fires ``on_route_change`` at launch.
+
+    Real Flet installs the handler via ``page.on_route_change = fn``; some
+    versions then fire it once at launch for the current route. This double
+    reproduces that by invoking the handler for ``self.route`` the moment it is
+    assigned — before ``main`` reaches its direct startup render — so the test
+    exercises the exact ordering the idempotency guard must survive.
+    """
+
+    def __init__(self, route: str) -> None:
+        self.route = route
+        self.title = ""
+        self.theme_mode = None
+        self.services: list = []
+        self.views = MagicMock()
+        self._on_route_change = None
+
+    @property
+    def on_route_change(self):
+        return self._on_route_change
+
+    @on_route_change.setter
+    def on_route_change(self, handler):
+        self._on_route_change = handler
+        # Launch-time echo for the initial route, arriving before the direct
+        # startup render runs.
+        handler(MagicMock(route=self.route))
+
+    def update(self) -> None:
+        pass
+
+    def run_task(self, *_args, **_kwargs) -> None:
+        pass
+
+
+async def test_launch_route_change_for_initial_route_is_coalesced(monkeypatch):
+    # Simulate Flet firing on_route_change at launch for the SAME route as the
+    # direct startup render. The initial view must build exactly once.
+    page = _EchoingPage(ROUTE_HOME)
+    rendered: list[str | None] = []
+    storage = ft.SharedPreferences()
+
+    monkeypatch.setattr(app_main.ft, "SharedPreferences", lambda: storage)
+    monkeypatch.setattr(
+        app_main, "resolve_base_url", AsyncMock(return_value=DEFAULT_API_BASE_URL)
+    )
+    monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
+    monkeypatch.setattr(
+        app_main,
+        "initial_render",
+        lambda *a, route=None, **k: rendered.append(route),
+    )
+
+    await app_main.main(page)
+
+    # Exactly one paint despite both the launch echo and the direct render.
+    assert rendered == [ROUTE_HOME]
+
+
+async def test_navigation_after_initial_paint_still_renders(monkeypatch):
+    # After the initial paint, a genuine navigation to a different route must
+    # render normally (the guard only coalesces the launch-time echo).
+    page = _render_counting_page(ROUTE_HOME)
+
+    rendered = await _run_main_with_counted_render(monkeypatch, page)
+    assert rendered == [ROUTE_HOME]
+
+    page.on_route_change(MagicMock(route=ROUTE_SUMMARY))
+
+    assert rendered == [ROUTE_HOME, ROUTE_SUMMARY]
+
+
+# ---------------------------------------------------------------------------
 # resolve_initial_route
 # ---------------------------------------------------------------------------
 
