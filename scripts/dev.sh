@@ -91,12 +91,22 @@ BACKEND_PID=$!
 
 # Wait for the backend to answer before launching the app.
 echo ">> Waiting for the backend to respond..."
+backend_ready=0
 for _ in $(seq 1 30); do
+  if ! kill -0 "${BACKEND_PID}" 2>/dev/null; then
+    echo "ERROR: backend process exited during startup." >&2
+    exit 1
+  fi
   if curl -fs -o /dev/null "${API_BASE_URL}/openapi.json"; then
+    backend_ready=1
     break
   fi
   sleep 1
 done
+if [[ "${backend_ready}" -ne 1 ]]; then
+  echo "ERROR: backend did not respond at ${API_BASE_URL} in time." >&2
+  exit 1
+fi
 echo ">> Backend is up."
 
 if [[ "${RUN_APP}" -eq 1 ]]; then
