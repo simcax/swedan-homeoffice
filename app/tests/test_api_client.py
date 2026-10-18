@@ -46,6 +46,7 @@ from app.api_client import (
     AnnualSummary,
     APIClient,
     APIError,
+    AuthError,
     ComplianceSummary,
     WorkEntry,
     WorkLocation,
@@ -466,3 +467,71 @@ class TestConflictPatchRetry:
             client = APIClient(base_url=BASE_URL)
             with pytest.raises(APIError):
                 await client.post_entry("2025-06-10", WorkLocation.HOME)
+
+
+# ---------------------------------------------------------------------------
+# 401 -> AuthError (shared-secret rejection)
+# ---------------------------------------------------------------------------
+
+
+class TestUnauthorized:
+    async def test_401_raises_auth_error(self) -> None:
+        # A rejected secret must surface as AuthError (a subclass of APIError)
+        # so callers can distinguish it from other failures.
+        mock_get = AsyncMock(return_value=_response(401, {"detail": "nope"}))
+
+        with patch("httpx.AsyncClient.get", mock_get):
+            client = APIClient(base_url=BASE_URL, secret="wrong")
+            with pytest.raises(AuthError):
+                await client.get_summary(2025, 6)
+
+    async def test_auth_error_is_an_api_error(self) -> None:
+        assert issubclass(AuthError, APIError)
+
+
+# ---------------------------------------------------------------------------
+# verify_secret (login-time probe)
+# ---------------------------------------------------------------------------
+
+
+class TestVerifySecret:
+    async def test_returns_true_when_backend_accepts_secret(self) -> None:
+        mock_get = AsyncMock(return_value=_response(200, _summary_json()))
+
+        with patch("httpx.AsyncClient.get", mock_get):
+            client = APIClient(base_url=BASE_URL, secret="correct")
+            ok = await client.verify_secret(2025, 6)
+
+        assert ok is True
+
+    async def test_sends_the_configured_secret_header(self) -> None:
+        mock_get = AsyncMock(return_value=_response(200, _summary_json()))
+
+        with patch("httpx.AsyncClient.get", mock_get):
+            client = APIClient(base_url=BASE_URL, secret="correct")
+            await client.verify_secret(2025, 6)
+
+        _, kwargs = mock_get.await_args
+        assert kwargs.get("headers", {}).get("X-API-Key") == "correct"
+
+    async def test_raises_auth_error_when_secret_rejected(self) -> None:
+        # A 401 is a definitive "wrong secret" answer and must propagate so the
+        # login flow keeps the user on the login screen.
+        mock_get = AsyncMock(return_value=_response(401, {"detail": "nope"}))
+
+        with patch("httpx.AsyncClient.get", mock_get):
+            client = APIClient(base_url=BASE_URL, secret="wrong")
+            with pytest.raises(AuthError):
+                await client.verify_secret(2025, 6)
+
+    async def test_returns_false_on_transient_failure(self) -> None:
+        # A non-auth failure (e.g. connection refused) must NOT be reported as
+        # a wrong secret — it returns False ("could not verify") instead, so a
+        # transient outage never locks out a user with a valid secret.
+        mock_get = AsyncMock(side_effect=httpx.ConnectError("refused"))
+
+        with patch("httpx.AsyncClient.get", mock_get):
+            client = APIClient(base_url=BASE_URL, secret="correct")
+            ok = await client.verify_secret(2025, 6)
+
+        assert ok is False

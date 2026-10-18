@@ -58,8 +58,15 @@ remembered, the :class:`APIClient` is configured to attach it as the
 ``X-API-Key`` header and the initial month's data is loaded; otherwise the
 login screen is shown and no entry/summary requests are issued until the user
 submits a secret (Requirements 5.1, 5.2, 6.2). The login submit handler
-persists the secret, configures the client, loads initial data and navigates
-to the front page (Requirements 5.3, 5.4).
+verifies the secret against the backend before unlocking: a rejected secret
+keeps the user on the login screen with the "secret rejected" message rather
+than opening HOME with an unusable key. Only an accepted secret is persisted,
+the client configured, initial data loaded and the front page shown
+(Requirements 5.3, 5.4, 8.3).
+
+A user-initiated logout action on the top app bar clears the stored and
+in-memory secret, discards state fetched under it, and returns to the login
+screen.
 
 Shared-secret recovery (401)
 ----------------------------
@@ -317,6 +324,7 @@ def build_view(
     on_settings_saved=None,
     on_state_change=None,
     on_login_submit=None,
+    on_logout=None,
 ) -> ft.View:
     """Build the :class:`ft.View` for ``route`` from the current state.
 
@@ -346,6 +354,8 @@ def build_view(
             operations update state, allowing the active route to be rebuilt.
         on_login_submit: Callback invoked with the raw secret when the login
             form is submitted (used only while ``state.screen`` is ``LOGIN``).
+        on_logout: Callback invoked (no args) when the user taps the logout
+            action on a routed screen; clears the secret and returns to login.
 
     Returns:
         A configured :class:`ft.View` for the resolved screen/route.
@@ -389,6 +399,7 @@ def build_view(
         route=resolved,
         controls=[body],
         navigation_bar=_build_navigation_bar(page, resolved),
+        appbar=_build_app_bar(on_logout),
         services=list(services) if services else [],
     )
 
@@ -404,6 +415,7 @@ def initial_render(
     on_settings_saved=None,
     on_state_change=None,
     on_login_submit=None,
+    on_logout=None,
 ) -> None:
     """Render the view for ``route`` directly into ``page.views``.
 
@@ -434,6 +446,8 @@ def initial_render(
             route can be repainted.
         on_login_submit: Optional callback forwarded to the login view and
             invoked with the raw secret on submit while the app is gated.
+        on_logout: Optional callback forwarded to the routed views' app bar and
+            invoked (no args) when the user taps logout.
     """
     target = route if route is not None else page.route
     page.views.clear()
@@ -448,9 +462,34 @@ def initial_render(
             on_settings_saved=on_settings_saved,
             on_state_change=on_state_change,
             on_login_submit=on_login_submit,
+            on_logout=on_logout,
         )
     )
     page.update()
+
+
+def _build_app_bar(on_logout=None) -> ft.AppBar:
+    """Build the top app bar carrying the logout action.
+
+    The logout action is shown on every routed (unlocked) screen so the user
+    always has a way to end the session and return to the login screen. When
+    ``on_logout`` is ``None`` the action is omitted (e.g. in tests that do not
+    wire logout).
+    """
+    actions: list[ft.Control] = []
+    if on_logout is not None:
+        actions.append(
+            ft.IconButton(
+                icon=ft.Icons.LOGOUT,
+                tooltip="Log out",
+                on_click=lambda _e: on_logout(),
+            )
+        )
+
+    return ft.AppBar(
+        title=ft.Text("Work Location Tracker"),
+        actions=actions,
+    )
 
 
 def _build_navigation_bar(page: ft.Page, active_route: str) -> ft.NavigationBar:
@@ -563,22 +602,71 @@ async def main(page: ft.Page) -> None:
         page.run_task(_reset_and_render)
 
     def _on_login_submit(raw_secret: str) -> None:
-        # Login submit handler (Requirements 5.3, 5.4). ``build_login_view``
-        # has already validated the input is non-empty before calling this, so
-        # here we persist the (trimmed) secret, configure the client to attach
-        # it as the ``X-API-Key`` header on every request, load the initial
-        # month's data, flip to the HOME screen, and repaint. Empty/blank input
-        # never reaches this callback — the login view keeps the user on the
-        # login screen with a validation message instead (Requirement 5.4).
+        # Login submit handler (Requirements 5.3, 5.4, 8.3). ``build_login_view``
+        # has already validated the input is non-empty before calling this.
+        #
+        # The secret is verified against the backend BEFORE the app is unlocked:
+        # a wrong secret must not open HOME (otherwise the user lands on an
+        # authenticated screen with a key the backend rejects and every write
+        # 401s with no way back to login). ``api_client.verify_secret`` issues a
+        # guarded probe request; a rejected secret surfaces as ``AuthError``.
+        #
+        # On ``AuthError`` we forget the rejected secret and stay on LOGIN with
+        # the "secret rejected" message (Requirement 8.3). Only once the backend
+        # accepts the secret do we persist it, load the initial month's data and
+        # flip to HOME. Empty/blank input never reaches this callback — the login
+        # view keeps the user on the login screen with a validation message
+        # instead (Requirement 5.4).
+        #
+        # NOTE: this coroutine deliberately handles ``AuthError`` itself rather
+        # than letting the ``page.run_task`` wrapper's central recovery fire,
+        # because the recovery assumes an already-unlocked session; during login
+        # we simply have not unlocked yet.
         async def _unlock() -> None:
-            secret = await save_secret(storage, raw_secret)
-            api_client.set_secret(secret)
+            candidate = raw_secret.strip()
+            api_client.set_secret(candidate)
+            try:
+                await api_client.verify_secret(
+                    state.selected_month.year,
+                    state.selected_month.month,
+                )
+            except AuthError:
+                # Rejected: forget the bad secret and stay on the login screen.
+                api_client.set_secret(None)
+                await clear_secret(storage)
+                state.auth_rejected = True
+                state.screen = Screen.LOGIN
+                _render(ROUTE_HOME)
+                return
+
+            # Accepted: persist and unlock.
+            await save_secret(storage, candidate)
             state.auth_rejected = False
             await _load_initial_data(state, api_client)
             state.screen = Screen.HOME
             _render(ROUTE_HOME)
 
         page.run_task(_unlock)
+
+    def _on_logout() -> None:
+        # Log out: forget the secret everywhere and return to the login screen
+        # so the user can enter a different secret. Mirrors ``handle_auth_error``
+        # but is user-initiated, so it does NOT set ``auth_rejected`` — there is
+        # nothing to apologise for, the user asked to sign out. Any state fetched
+        # under the old secret is discarded so a stale entry/ID cannot leak into
+        # the next session.
+        async def _logout() -> None:
+            await clear_secret(storage)
+            api_client.set_secret(None)
+            state.auth_rejected = False
+            state.entries = {}
+            state.compliance_summary = None
+            state.annual_summary = None
+            state.clear_error()
+            state.screen = Screen.LOGIN
+            _render(ROUTE_HOME)
+
+        page.run_task(_logout)
 
     def _render(route: str | None) -> None:
         # Delegate to the shared, runtime-free rendering primitive, forwarding
@@ -595,6 +683,7 @@ async def main(page: ft.Page) -> None:
             on_settings_saved=_on_settings_saved,
             on_state_change=lambda: _render(page.route),
             on_login_submit=_on_login_submit,
+            on_logout=_on_logout,
         )
 
     # Idempotency guard for the initial paint. Startup renders the first view
