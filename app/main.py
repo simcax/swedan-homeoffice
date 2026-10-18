@@ -92,6 +92,7 @@ from app.concurrency import GuardKind, WriteGuard, backend_superseded
 from app.state import AppState, Screen
 from app.views.home_view import build_home_view
 from app.views.login_view import (
+    VERIFY_FAILED_MESSAGE,
     build_login_view,
     clear_secret,
     load_secret,
@@ -310,6 +311,7 @@ async def handle_auth_error(
     await clear_secret(storage)
     api_client.set_secret(None)
     state.auth_rejected = True
+    state.login_notice = None
     state.screen = Screen.LOGIN
 
 
@@ -373,6 +375,7 @@ def build_view(
                     if on_login_submit is not None
                     else (lambda _s: None),
                     auth_rejected=state.auth_rejected,
+                    notice=state.login_notice,
                 )
             ],
             services=list(services) if services else [],
@@ -626,22 +629,40 @@ async def main(page: ft.Page) -> None:
             candidate = raw_secret.strip()
             api_client.set_secret(candidate)
             try:
-                await api_client.verify_secret(
+                verified = await api_client.verify_secret(
                     state.selected_month.year,
                     state.selected_month.month,
                 )
             except AuthError:
-                # Rejected: forget the bad secret and stay on the login screen.
+                # Rejected (HTTP 401): forget the bad secret and stay on the
+                # login screen with the "secret rejected" message.
                 api_client.set_secret(None)
                 await clear_secret(storage)
                 state.auth_rejected = True
+                state.login_notice = None
                 state.screen = Screen.LOGIN
                 _render(ROUTE_HOME)
                 return
 
-            # Accepted: persist and unlock.
+            if not verified:
+                # Could not verify (backend unreachable / transient failure).
+                # The secret may well be correct, but we must not unlock on an
+                # unverified secret — otherwise a wrong secret entered during an
+                # outage would open HOME and 401 on the first write with no way
+                # back. Forget the unverified secret and keep the user on login
+                # with an informational notice distinct from a rejection.
+                api_client.set_secret(None)
+                await clear_secret(storage)
+                state.auth_rejected = False
+                state.login_notice = VERIFY_FAILED_MESSAGE
+                state.screen = Screen.LOGIN
+                _render(ROUTE_HOME)
+                return
+
+            # Verified: persist the secret and unlock.
             await save_secret(storage, candidate)
             state.auth_rejected = False
+            state.login_notice = None
             await _load_initial_data(state, api_client)
             state.screen = Screen.HOME
             _render(ROUTE_HOME)
@@ -659,6 +680,7 @@ async def main(page: ft.Page) -> None:
             await clear_secret(storage)
             api_client.set_secret(None)
             state.auth_rejected = False
+            state.login_notice = None
             state.entries = {}
             state.compliance_summary = None
             state.annual_summary = None

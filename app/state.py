@@ -80,6 +80,11 @@ class AppState:
     # Drives the "secret rejected" message on the login screen after a backend
     # 401 sends the user back to login (Req 8.3).
     auth_rejected: bool = False
+    # An informational message shown on the login screen that is distinct from
+    # the "secret rejected" case — e.g. "could not verify the secret right now"
+    # when the backend was unreachable during a login attempt. ``None`` when
+    # there is no such notice.
+    login_notice: str | None = None
 
     def apply_entry(self, entry: WorkEntry) -> None:
         """Insert or replace ``entry`` keyed by its ISO date string.
