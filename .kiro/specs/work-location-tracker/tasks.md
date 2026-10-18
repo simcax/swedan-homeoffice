@@ -1,4 +1,4 @@
-Create# Implementation Plan: Work Location Tracker
+# Implementation Plan: Work Location Tracker
 
 ## Overview
 
@@ -308,13 +308,13 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
   - Initialise `AppState` and `APIClient` from `API_BASE_URL` env/storage on startup
   - _Requirements: 1.4, 5.1, 6.1, 7.1_
 
-- [ ] 14. Checkpoint — full stack integration
+- [x] 14. Checkpoint — full stack integration
   - Run all tests: `uv run pytest -v`
   - Fix any remaining ruff issues in both packages: `uv run ruff check . && uv run ruff format .`
   - Ask the user if any questions arise before finalising deployment config.
 
-- [ ] 15. Deployment configuration
-  - [ ] 15.1 Verify Clever Cloud deployment config in `backend/pyproject.toml` and root files
+- [x] 15. Deployment configuration
+  - [x] 15.1 Verify Clever Cloud deployment config in `backend/pyproject.toml` and root files
     - Confirm `CC_PYTHON_UV_RUN_COMMAND` is set to `.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8080`
     - Confirm `CC_POST_BUILD_HOOK` is set to `uv run alembic upgrade head`
     - Confirm `CC_PYTHON_UV_SYNC_FLAGS` is `--locked --no-progress`
@@ -322,12 +322,12 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - Confirm `uv.lock` is committed
     - _Requirements: 11.2, 11.3, 11.4, 11.5, 11.6_
 
-  - [ ] 15.2 Write `backend/config.py` with `pydantic-settings` `Settings` class
+  - [x] 15.2 Write `backend/config.py` with `pydantic-settings` `Settings` class
     - `database_url: str` (required — missing value aborts startup)
     - Rewrite `postgresql://` → `postgresql+asyncpg://` in the engine factory
     - _Requirements: 11.1, 11.2, 11.6_
 
-- [ ] 16. Final checkpoint — all tests pass
+- [x] 16. Final checkpoint — all tests pass
   - Run complete test suite: `uv run pytest -v --tb=short`
   - Ensure zero failures and zero warnings
   - Ask the user if any questions arise.

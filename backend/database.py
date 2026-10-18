@@ -17,8 +17,6 @@ requested, which in production happens during startup validation.
 import logging
 from typing import Any
 
-from pydantic import field_validator
-from pydantic_settings import BaseSettings
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -27,27 +25,21 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from backend.config import Settings
+
 logger = logging.getLogger(__name__)
 
 
-class _DatabaseSettings(BaseSettings):
-    """Load and validate DATABASE_URL from the environment."""
+def _rewrite_scheme(database_url: str) -> str:
+    """Rewrite ``postgresql://`` → ``postgresql+asyncpg://`` for the async driver.
 
-    database_url: str
-
-    @field_validator("database_url")
-    @classmethod
-    def rewrite_scheme(cls, v: str) -> str:
-        """Rewrite postgresql:// to postgresql+asyncpg:// for the async driver."""
-        return v.replace("postgresql://", "postgresql+asyncpg://", 1)
-
-    model_config = {
-        # DATABASE_URL must come exclusively from the process environment
-        # (Requirement 11.1); no ``.env`` fallback is permitted, so startup
-        # aborts when the variable is absent. Ignore unrelated process env vars
-        # (e.g. GITHUB_TOKEN); only DATABASE_URL is consumed.
-        "extra": "ignore",
-    }
+    The scheme rewrite lives in the engine factory (not in
+    :class:`~backend.config.Settings`) so the raw operator-provided value stays
+    observable at the configuration boundary (Requirement 11.6). Clever Cloud
+    injects ``DATABASE_URL`` in the standard ``postgresql://`` form; asyncpg
+    requires the ``postgresql+asyncpg://`` form.
+    """
+    return database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 
 class DatabaseConfigError(RuntimeError):
@@ -66,7 +58,7 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def _load_settings() -> _DatabaseSettings:
+def _load_settings() -> Settings:
     """Load ``DATABASE_URL`` settings, raising a clear error when absent.
 
     Raises:
@@ -75,7 +67,7 @@ def _load_settings() -> _DatabaseSettings:
             logs point operators at the fix.
     """
     try:
-        return _DatabaseSettings()  # type: ignore[call-arg]
+        return Settings()  # type: ignore[call-arg]
     except Exception as exc:  # pydantic ValidationError when DATABASE_URL missing
         logger.critical(
             "DATABASE_URL environment variable is not set. "
@@ -102,7 +94,7 @@ def resolve_database_url() -> str:
     Raises:
         DatabaseConfigError: When ``DATABASE_URL`` cannot be resolved.
     """
-    return _load_settings().database_url
+    return _rewrite_scheme(_load_settings().database_url)
 
 
 def get_engine() -> AsyncEngine:
@@ -111,7 +103,7 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         settings = _load_settings()
         _engine = create_async_engine(
-            settings.database_url,
+            _rewrite_scheme(settings.database_url),
             echo=False,
             pool_pre_ping=True,
         )
