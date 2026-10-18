@@ -160,6 +160,25 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/3f/3b/514d5e500ff1183de30298b5cd4a0fbcf6eebefd14bf2c095afa6fb13060/flet-1.0.2-py3-none-any.whl", hash = "sha256:2a46ddc9f9c7d779bfb56492d9d4b1bb16fa9b55c04e415b8b0b8f28e0f8b135", size = 634721, upload-time = "2026-09-28T19:19:52.151Z" },
 ]
 
+[package.optional-dependencies]
+web = [
+    { name = "flet-web" },
+]
+
+[[package]]
+name = "flet-web"
+version = "1.0.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "flet" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/57/88/55a3ce036e293fb409247c7f6de5ce7364ea7dcbad4b14c4cd71499306d4/flet_web-1.0.2.tar.gz", hash = "sha256:05a0126be2fbd72c6c03e11316eae9c52362700cf2bbbc92366903d5b183f640", size = 22034, upload-time = "2026-09-28T19:20:07.065Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/53/0fa671b4e287eaaa3aada0e639f88257ddbd165b36fc8581debc2e5395a3/flet_web-1.0.2-py3-none-any.whl", hash = "sha256:8d42e5088f41d6775d6a60201a467122813c8d605dfab9c8e4bac145ffd97168", size = 27296863, upload-time = "2026-09-28T19:20:04.885Z" },
+]
+
 [[package]]
 name = "greenlet"
 version = "3.5.6"
@@ -1197,6 +1216,7 @@ dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
     { name = "fastapi" },
+    { name = "flet", extra = ["web"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -1218,6 +1238,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "flet", extras = ["web"], specifier = ">=1.0.0" },
     { name = "pydantic", specifier = ">=2.9.0" },
     { name = "pydantic-settings", specifier = ">=2.5.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },

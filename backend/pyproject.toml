@@ -10,6 +10,12 @@ dependencies = [
     "pydantic>=2.9.0",
     "pydantic-settings>=2.5.0",
     "alembic>=1.13.0",
+    # The backend optionally serves the Flet web UI from the same instance
+    # (see backend.main._mount_frontend). flet.fastapi requires the flet-web
+    # runtime, which ships only via the `web` extra — a plain `flet` dependency
+    # does not install it, so production `uv sync --no-dev` would otherwise fail
+    # at import with `ModuleNotFoundError: No module named 'flet_web'`.
+    "flet[web]>=1.0.0",
 ]
 
 [dependency-groups]
