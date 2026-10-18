@@ -34,9 +34,12 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import get_settings
 from backend.database import get_session
 from backend.main import create_app
 from backend.repository import EntryRepository
+
+from .conftest import AUTH_HEADERS, settings_override
 
 API = "/api/v1/entries"
 
@@ -58,9 +61,14 @@ async def client(async_session: AsyncSession) -> AsyncGenerator[AsyncClient, Non
         yield async_session
 
     app.dependency_overrides[get_session] = _override_get_session
+    # Routers are guarded by ``verify_api_key``; supply a known secret via the
+    # settings override and send the matching header on every request.
+    app.dependency_overrides[get_settings] = settings_override
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=transport, base_url="http://test", headers=AUTH_HEADERS
+    ) as ac:
         yield ac
 
     app.dependency_overrides.clear()

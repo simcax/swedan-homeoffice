@@ -35,9 +35,12 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from backend.config import get_settings
 from backend.database import get_session
 from backend.main import app
 from backend.models import Base, WorkEntry
+
+from .conftest import AUTH_HEADERS, settings_override
 
 # ``backend.database`` now initializes its engine lazily, so importing it (and
 # ``backend.main``) never requires ``DATABASE_URL``. Tests override
@@ -72,10 +75,13 @@ async def client() -> AsyncGenerator[tuple[AsyncClient, AsyncSession], None]:
             yield session
 
         app.dependency_overrides[get_session] = _override_get_session
+        # Routers are guarded by ``verify_api_key``; supply a known secret via
+        # the settings override and send the matching header on every request.
+        app.dependency_overrides[get_settings] = settings_override
 
         transport = ASGITransport(app=app)
         async with AsyncClient(
-            transport=transport, base_url="http://test"
+            transport=transport, base_url="http://test", headers=AUTH_HEADERS
         ) as http_client:
             try:
                 yield http_client, session

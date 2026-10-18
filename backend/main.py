@@ -34,12 +34,14 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import InterfaceError, OperationalError
 from starlette.status import HTTP_503_SERVICE_UNAVAILABLE
 
+from backend.auth import verify_api_key
+from backend.config import SharedSecretConfigurationError, get_settings
 from backend.database import DatabaseUnavailableError, get_engine
 from backend.routers import entries, summary
 
@@ -48,13 +50,19 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Validate database configuration before serving.
+    """Validate database and shared-secret configuration before serving.
 
     On startup, when configuration validation is enabled (production / real
     runs), abort if ``DATABASE_URL`` is absent, logging a clear message
     (Requirement 11.2). This is checked by initializing the database engine,
     which raises :class:`~backend.database.DatabaseConfigError` when the
     variable is missing.
+
+    The same validation also reads :attr:`Settings.required_shared_secret`,
+    which raises :class:`~backend.config.SharedSecretConfigurationError` when
+    ``APP_SHARED_SECRET`` is unset or blank, aborting startup so a
+    misconfigured deployment never serves traffic (Requirement 7.4). The
+    missing variable name is logged clearly before re-raising.
 
     Migrations are **not** run here. ``alembic upgrade head`` runs once as a
     dedicated pre-start step (:mod:`backend.migrate`) so it cannot race across
@@ -68,6 +76,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # environment; a missing value raises DatabaseConfigError (already
         # logged clearly by backend.database). Requirement 11.2.
         get_engine()
+
+        # Validate the shared secret the same way: reading the property raises
+        # SharedSecretConfigurationError when APP_SHARED_SECRET is unset/blank,
+        # which aborts startup (Requirement 7.4). Log the variable name so the
+        # fix is obvious in the deployment logs.
+        try:
+            _ = get_settings().required_shared_secret
+        except SharedSecretConfigurationError:
+            logger.error(
+                "APP_SHARED_SECRET is not set. Set it to the shared secret the "
+                "Flet app sends in the X-API-Key header; aborting startup."
+            )
+            raise
 
     yield
 
@@ -121,8 +142,13 @@ def create_app(validate_config: bool | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.include_router(entries.router)
-    app.include_router(summary.router)
+    # Guard every API route with the shared-secret dependency so each entries
+    # and summary request must carry a valid ``X-API-Key`` header (Requirements
+    # 7.2, 7.3). Attaching it at router-inclusion time keeps the guard uniform
+    # across all current and future routes on these routers, while leaving CORS
+    # pre-flight ``OPTIONS`` and any mounted Flet frontend unaffected.
+    app.include_router(entries.router, dependencies=[Depends(verify_api_key)])
+    app.include_router(summary.router, dependencies=[Depends(verify_api_key)])
 
     # Optionally serve the Flet web UI from this same instance so a single
     # Clever Cloud app (and one PostgreSQL add-on) hosts both the API and the

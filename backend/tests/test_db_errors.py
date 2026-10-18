@@ -25,8 +25,11 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import InterfaceError, OperationalError
 
+from backend.config import get_settings
 from backend.database import get_session
 from backend.main import create_app
+
+from .conftest import AUTH_HEADERS, settings_override
 
 API = "/api/v1/entries"
 
@@ -54,8 +57,13 @@ def _client_raising(error: Exception) -> AsyncClient:
         yield _FailingSession(error)
 
     app.dependency_overrides[get_session] = _override_get_session
+    # The entries route is guarded by ``verify_api_key``; supply a known secret
+    # so the request reaches the DB boundary where the connectivity error fires.
+    app.dependency_overrides[get_settings] = settings_override
     transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url="http://test")
+    return AsyncClient(
+        transport=transport, base_url="http://test", headers=AUTH_HEADERS
+    )
 
 
 def _client_raising_at_database_boundary(
@@ -72,8 +80,13 @@ def _client_raising_at_database_boundary(
     monkeypatch.setattr(
         "backend.database.get_session_factory", lambda: _failing_session_context
     )
+    # The entries route is guarded by ``verify_api_key``; supply a known secret
+    # so the request reaches the real DB boundary under test.
+    app.dependency_overrides[get_settings] = settings_override
     transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url="http://test")
+    return AsyncClient(
+        transport=transport, base_url="http://test", headers=AUTH_HEADERS
+    )
 
 
 def _operational_error() -> OperationalError:

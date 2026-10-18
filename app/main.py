@@ -47,7 +47,31 @@ The pure routing/bootstrapping logic lives in runtime-free helpers
 so it can be unit-tested without starting the Flet runtime. ``main`` and
 ``run`` are thin wrappers that only perform Flet side effects.
 
-Requirements: 1.4, 5.1, 6.1, 7.1
+Shared-secret gate (startup)
+----------------------------
+
+Before the first paint, ``main`` resolves the gated :class:`~app.state.Screen`
+from the shared secret persisted in ``SharedPreferences``
+(:func:`~app.views.login_view.load_secret` +
+:func:`~app.views.login_view.resolve_initial_screen`). When a usable secret is
+remembered, the :class:`APIClient` is configured to attach it as the
+``X-API-Key`` header and the initial month's data is loaded; otherwise the
+login screen is shown and no entry/summary requests are issued until the user
+submits a secret (Requirements 5.1, 5.2, 6.2). The login submit handler
+persists the secret, configures the client, loads initial data and navigates
+to the front page (Requirements 5.3, 5.4).
+
+Shared-secret recovery (401)
+----------------------------
+
+Every background coroutine is scheduled through ``page.run_task``, which
+``main`` wraps so any :class:`~app.api_client.AuthError` raised by a rejected
+secret is caught centrally. The wrapper invokes :func:`handle_auth_error`,
+which forgets the stored and in-memory secret and flips the gated screen back
+to login, then repaints the login view with the "secret rejected" message
+(Requirements 8.1, 8.2, 8.3).
+
+Requirements: 1.4, 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 7.1, 8.1, 8.2, 8.3
 """
 
 from __future__ import annotations
@@ -56,10 +80,17 @@ import os
 
 import flet as ft
 
-from app.api_client import APIClient, APIError
+from app.api_client import APIClient, APIError, AuthError
 from app.concurrency import GuardKind, WriteGuard, backend_superseded
-from app.state import AppState
+from app.state import AppState, Screen
 from app.views.home_view import build_home_view
+from app.views.login_view import (
+    build_login_view,
+    clear_secret,
+    load_secret,
+    resolve_initial_screen,
+    save_secret,
+)
 from app.views.settings_view import (
     DEFAULT_API_BASE_URL,
     KeyValueStorage,
@@ -236,6 +267,45 @@ async def reset_for_new_backend(state: AppState, api_client: APIClient) -> None:
     await load_annual_summary(state, api_client, generation=gen)
 
 
+async def handle_auth_error(
+    state: AppState,
+    api_client: APIClient,
+    storage: KeyValueStorage,
+) -> None:
+    """Return the app to the login screen after the backend rejects the secret.
+
+    Invoked centrally whenever any ``page.run_task`` coroutine raises
+    :class:`~app.api_client.AuthError` (the backend answered an entry/summary
+    request with HTTP ``401``). It forgets the rejected secret everywhere it is
+    held and flips the gated screen back to login so the user is prompted to
+    re-enter a valid secret:
+
+    * removes the stored secret from local storage via
+      :func:`~app.views.login_view.clear_secret` (Requirement 8.1);
+    * clears the client's in-memory secret with ``api_client.set_secret(None)``
+      so no further request carries the rejected key (Requirement 8.2);
+    * sets ``state.auth_rejected = True`` so the login view shows the
+      "secret rejected" message (Requirement 8.3);
+    * sets ``state.screen = Screen.LOGIN`` so the front page is withheld
+      (Requirement 8.2).
+
+    This mutates ``state`` and ``api_client`` and persists the storage change,
+    but performs no Flet rendering itself — the caller repaints after awaiting
+    it (see the ``page.run_task`` wrapper installed in :func:`main`). Keeping it
+    free of the Flet runtime makes it directly unit-testable with a plain
+    :class:`AppState`, a mocked ``api_client`` and a mock storage.
+
+    Args:
+        state: The shared in-memory :class:`AppState` to flip back to login.
+        api_client: The backend :class:`APIClient` whose secret is cleared.
+        storage: The async key-value storage the secret is removed from.
+    """
+    await clear_secret(storage)
+    api_client.set_secret(None)
+    state.auth_rejected = True
+    state.screen = Screen.LOGIN
+
+
 def build_view(
     page: ft.Page,
     route: str,
@@ -246,14 +316,21 @@ def build_view(
     services: list[ft.Service] | None = None,
     on_settings_saved=None,
     on_state_change=None,
+    on_login_submit=None,
 ) -> ft.View:
     """Build the :class:`ft.View` for ``route`` from the current state.
 
-    The unknown-route fallback goes through :func:`resolve_initial_route`, so
-    this never raises for a bad route — it renders the home screen instead.
-    Each view carries a bottom :class:`ft.NavigationBar` so the user can move
-    between the three screens, and (when supplied) the ``services`` list for
-    view-scoped Flet services.
+    When ``state.screen`` is :attr:`Screen.LOGIN` the app is gated: the login
+    screen is rendered instead of the routed home/summary/settings view and the
+    bottom navigation bar is withheld, so the front page stays inaccessible
+    until a shared secret is supplied (Requirements 5.1, 6.2). ``on_login_submit``
+    is wired to the login form's submit callback.
+
+    Otherwise the unknown-route fallback goes through
+    :func:`resolve_initial_route`, so this never raises for a bad route — it
+    renders the home screen instead. Each routed view carries a bottom
+    :class:`ft.NavigationBar` so the user can move between the three screens,
+    and (when supplied) the ``services`` list for view-scoped Flet services.
 
     Args:
         page: The active Flet page.
@@ -267,10 +344,30 @@ def build_view(
             invoked with the normalised URL after a successful save.
         on_state_change: Optional callback invoked after asynchronous home
             operations update state, allowing the active route to be rebuilt.
+        on_login_submit: Callback invoked with the raw secret when the login
+            form is submitted (used only while ``state.screen`` is ``LOGIN``).
 
     Returns:
-        A configured :class:`ft.View` for the resolved route.
+        A configured :class:`ft.View` for the resolved screen/route.
     """
+    # Gate the app behind the login screen until a shared secret is configured
+    # (Requirements 5.1, 6.2). No navigation bar is shown so the front page and
+    # its sibling screens stay withheld.
+    if state.screen is Screen.LOGIN:
+        return ft.View(
+            route=route if route is not None else ROUTE_HOME,
+            controls=[
+                build_login_view(
+                    page,
+                    on_login_submit
+                    if on_login_submit is not None
+                    else (lambda _s: None),
+                    auth_rejected=state.auth_rejected,
+                )
+            ],
+            services=list(services) if services else [],
+        )
+
     resolved = resolve_initial_route(route)
 
     if resolved == ROUTE_SUMMARY:
@@ -306,6 +403,7 @@ def initial_render(
     services: list[ft.Service] | None = None,
     on_settings_saved=None,
     on_state_change=None,
+    on_login_submit=None,
 ) -> None:
     """Render the view for ``route`` directly into ``page.views``.
 
@@ -334,6 +432,8 @@ def initial_render(
         on_state_change: Optional callback forwarded to the home view and
             invoked after asynchronous home-view state changes so the active
             route can be repainted.
+        on_login_submit: Optional callback forwarded to the login view and
+            invoked with the raw secret on submit while the app is gated.
     """
     target = route if route is not None else page.route
     page.views.clear()
@@ -347,6 +447,7 @@ def initial_render(
             services=services,
             on_settings_saved=on_settings_saved,
             on_state_change=on_state_change,
+            on_login_submit=on_login_submit,
         )
     )
     page.update()
@@ -414,6 +515,32 @@ async def main(page: ft.Page) -> None:
     state = AppState(selected_month=_first_of_this_month())
     api_client = APIClient(base_url)
 
+    # Centralise shared-secret recovery (Requirements 8.1, 8.2, 8.3). Every
+    # background coroutine in the app is scheduled through ``page.run_task``
+    # (home-view log/navigate/edit/delete, settings reset, login unlock). Rather
+    # than teach each call site to catch ``AuthError``, wrap ``page.run_task``
+    # once here so any coroutine it schedules is guarded: when the backend
+    # rejects the secret with a ``401`` the client raises ``AuthError``, which
+    # bubbles out of the task and is caught by the wrapper, which clears the
+    # secret, flips to the login screen (:func:`handle_auth_error`) and
+    # repaints. The wrapper preserves ``run_task``'s contract — the handler must
+    # be a coroutine function, called with the forwarded args — so existing call
+    # sites are unaffected. ``api_client`` is read at call time so a backend
+    # switch (settings save rebinds it) uses the live client.
+    _page_run_task = page.run_task
+
+    def _guarded_run_task(handler, *args, **kwargs):
+        async def _guarded() -> None:
+            try:
+                await handler(*args, **kwargs)
+            except AuthError:
+                await handle_auth_error(state, api_client, storage)
+                _render(ROUTE_HOME)
+
+        return _page_run_task(_guarded)
+
+    page.run_task = _guarded_run_task  # type: ignore[method-assign]
+
     def _on_settings_saved(new_url: str) -> None:
         # Rebuild the client against the newly saved URL so later requests use
         # it immediately. When the URL genuinely changed, discard state fetched
@@ -435,6 +562,24 @@ async def main(page: ft.Page) -> None:
 
         page.run_task(_reset_and_render)
 
+    def _on_login_submit(raw_secret: str) -> None:
+        # Login submit handler (Requirements 5.3, 5.4). ``build_login_view``
+        # has already validated the input is non-empty before calling this, so
+        # here we persist the (trimmed) secret, configure the client to attach
+        # it as the ``X-API-Key`` header on every request, load the initial
+        # month's data, flip to the HOME screen, and repaint. Empty/blank input
+        # never reaches this callback — the login view keeps the user on the
+        # login screen with a validation message instead (Requirement 5.4).
+        async def _unlock() -> None:
+            secret = await save_secret(storage, raw_secret)
+            api_client.set_secret(secret)
+            state.auth_rejected = False
+            await _load_initial_data(state, api_client)
+            state.screen = Screen.HOME
+            _render(ROUTE_HOME)
+
+        page.run_task(_unlock)
+
     def _render(route: str | None) -> None:
         # Delegate to the shared, runtime-free rendering primitive, forwarding
         # the explicit route so same-URL repaints (settings save) and route
@@ -449,6 +594,7 @@ async def main(page: ft.Page) -> None:
             services=[storage],
             on_settings_saved=_on_settings_saved,
             on_state_change=lambda: _render(page.route),
+            on_login_submit=_on_login_submit,
         )
 
     # Idempotency guard for the initial paint. Startup renders the first view
@@ -486,9 +632,17 @@ async def main(page: ft.Page) -> None:
 
     page.on_route_change = _on_route_change
 
-    # Load the initial month's data before the first render so the home screen
-    # opens populated (Requirements 1.4, 5.1, 6.1).
-    await _load_initial_data(state, api_client)
+    # Resolve the gated screen from the stored shared secret before the first
+    # paint (Requirements 5.1, 5.2, 6.2). When a usable secret is remembered,
+    # configure the client to attach it as the ``X-API-Key`` header and load
+    # the initial month's data so the home screen opens populated. When none is
+    # stored, stay on the login screen and skip the initial load entirely so no
+    # entry/summary requests are issued without a secret (Requirement 6.2).
+    stored_secret = await load_secret(storage)
+    state.screen = resolve_initial_screen(stored_secret)
+    if state.screen is Screen.HOME:
+        api_client.set_secret(stored_secret)
+        await _load_initial_data(state, api_client)
 
     # Perform the initial render DIRECTLY (not via page.navigate). This builds
     # and shows the first view regardless of whether on_route_change fires,

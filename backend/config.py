@@ -37,6 +37,8 @@ builds on top of it to construct the async engine.
 Requirements: 11.1, 11.2, 11.6
 """
 
+from functools import lru_cache
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,6 +47,15 @@ class DatabaseConfigurationError(ValueError):
 
     Carries a clear message naming the environment variables that would satisfy
     the requirement, so startup validation and logs point operators at the fix.
+    """
+
+
+class SharedSecretConfigurationError(ValueError):
+    """Raised when the required shared secret is missing or blank.
+
+    Carries a clear message naming the ``APP_SHARED_SECRET`` environment
+    variable so startup validation and logs point operators at the fix
+    (Requirement 7.1, 7.4).
     """
 
 
@@ -69,9 +80,19 @@ class Settings(BaseSettings):
         postgresql_addon_password: Database password
             (``POSTGRESQL_ADDON_PASSWORD``).
         postgresql_addon_db: Database name (``POSTGRESQL_ADDON_DB``).
+        app_shared_secret: Expected value of the shared secret the Flet app
+            sends in the ``X-API-Key`` header, read from the
+            ``APP_SHARED_SECRET`` environment variable. Optional at the field
+            level so configuration can be inspected without raising; read
+            :attr:`required_shared_secret` to get a validated non-blank value
+            (Requirement 7.1).
     """
 
     database_url: str | None = None
+
+    # Shared secret the Flet app sends in the ``X-API-Key`` header. Read from
+    # the ``APP_SHARED_SECRET`` environment variable (Requirement 7.1).
+    app_shared_secret: str | None = None
 
     # Clever Cloud PostgreSQL add-on variables (injected at run time). The
     # field names map case-insensitively to the uppercase env var names.
@@ -128,6 +149,26 @@ class Settings(BaseSettings):
             "variables are injected."
         )
 
+    @property
+    def required_shared_secret(self) -> str:
+        """Return the configured shared secret, or raise when it is missing.
+
+        The value comes from the ``APP_SHARED_SECRET`` environment variable
+        (via :attr:`app_shared_secret`). Surrounding whitespace is stripped and
+        a blank value is treated as absent.
+
+        Raises:
+            SharedSecretConfigurationError: When ``APP_SHARED_SECRET`` is unset
+                or blank (Requirement 7.1, 7.4).
+        """
+        value = (self.app_shared_secret or "").strip()
+        if not value:
+            raise SharedSecretConfigurationError(
+                "APP_SHARED_SECRET is not set. Set it to the shared secret the "
+                "Flet app sends in the X-API-Key header."
+            )
+        return value
+
     def _assemble_addon_url(self) -> str | None:
         """Build a ``postgresql://`` URL from the discrete add-on parts.
 
@@ -145,3 +186,15 @@ class Settings(BaseSettings):
             return None
 
         return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Return the application settings for dependency injection.
+
+    Cached so a single :class:`Settings` instance is shared across requests.
+    FastAPI dependencies (e.g. the ``X-API-Key`` verification dependency) and
+    tests can override this provider to supply known configuration without
+    touching the process environment.
+    """
+    return Settings()  # type: ignore[call-arg]
