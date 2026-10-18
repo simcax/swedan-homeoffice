@@ -227,7 +227,7 @@ def build_settings_view(
         label="API base URL",
         value=current_value,
         hint_text=DEFAULT_API_BASE_URL,
-        helper_text=warn_insecure_api_base_url(current_value),
+        helper=warn_insecure_api_base_url(current_value),
         autofocus=True,
     )
 
@@ -238,7 +238,7 @@ def build_settings_view(
             if error is not None:
                 # Reject invalid input: surface the error inline and via a red
                 # snack bar, and do NOT persist anything.
-                url_field.error_text = error
+                url_field.error = error
                 page.show_dialog(
                     ft.SnackBar(
                         content=ft.Text(error, color=ft.Colors.WHITE),
@@ -249,7 +249,7 @@ def build_settings_view(
                 return
 
             # Valid: clear any prior error, normalise and persist.
-            url_field.error_text = None
+            url_field.error = None
             normalised = await save_api_base_url(storage, raw)
             url_field.value = normalised
 
@@ -259,7 +259,7 @@ def build_settings_view(
             # text under the field).
             warning = warn_insecure_api_base_url(normalised)
             if warning is not None:
-                url_field.helper_text = warning
+                url_field.helper = warning
                 page.show_dialog(
                     ft.SnackBar(
                         content=ft.Text(warning, color=ft.Colors.BLACK),
@@ -267,7 +267,7 @@ def build_settings_view(
                     )
                 )
             else:
-                url_field.helper_text = None
+                url_field.helper = None
                 page.show_dialog(
                     ft.SnackBar(
                         content=ft.Text("API URL saved.", color=ft.Colors.WHITE),

@@ -189,7 +189,7 @@ def test_settings_view_warns_for_active_remote_http_url():
 
     field = _find_textfields(container)[0]
 
-    assert field.helper_text == warn_insecure_api_base_url("http://example.com")
+    assert field.helper == warn_insecure_api_base_url("http://example.com")
 
 
 def test_warn_flags_remote_http_host():
@@ -252,8 +252,8 @@ async def test_save_handler_warns_but_saves_remote_http():
 
     storage.set.assert_awaited_once_with(API_BASE_URL_KEY, "http://example.com")
     assert saved == ["http://example.com"]
-    assert field.error_text is None
-    assert field.helper_text is not None
+    assert field.error is None
+    assert field.helper is not None
     page.show_dialog.assert_called_once()
     snack = page.show_dialog.call_args.args[0]
     assert isinstance(snack, ft.SnackBar)
@@ -274,7 +274,7 @@ async def test_save_handler_no_warning_for_https():
     await _run_captured_task(page)
 
     storage.set.assert_awaited_once()
-    assert field.helper_text is None
+    assert field.helper is None
     snack = page.show_dialog.call_args.args[0]
     assert snack.bgcolor == ft.Colors.GREEN_700
 
@@ -327,11 +327,11 @@ async def test_save_handler_persists_valid_url_and_shows_dialog():
     storage.set.assert_awaited_once_with(API_BASE_URL_KEY, "https://api.example.com")
     page.show_dialog.assert_called_once()
     assert isinstance(page.show_dialog.call_args.args[0], ft.SnackBar)
-    assert field.error_text is None
+    assert field.error is None
 
 
 async def test_save_handler_rejects_invalid_url_without_persisting():
-    # An invalid URL must NOT be persisted; the handler sets error_text and
+    # An invalid URL must NOT be persisted; the handler sets error and
     # shows a red snack bar via show_dialog.
     page = MagicMock(spec=ft.Page)
     storage = _fake_storage()
@@ -343,7 +343,7 @@ async def test_save_handler_rejects_invalid_url_without_persisting():
     await _run_captured_task(page)
 
     storage.set.assert_not_awaited()
-    assert field.error_text is not None
+    assert field.error is not None
     page.show_dialog.assert_called_once()
     assert isinstance(page.show_dialog.call_args.args[0], ft.SnackBar)
 

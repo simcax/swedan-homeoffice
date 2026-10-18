@@ -522,17 +522,21 @@ async def load_month(
         entries = await api_client.get_entries(year, month)
         summary = await api_client.get_summary(year, month)
     except APIError as exc:
-        if _is_superseded(state, generation) or (
-            expected_month is not None and state.selected_month != expected_month
-        ) or state.month_load_generation != request_generation:
+        if (
+            _is_superseded(state, generation)
+            or (expected_month is not None and state.selected_month != expected_month)
+            or state.month_load_generation != request_generation
+        ):
             return False
         _record_error(state, classify_error(exc))
         return False
 
     # Guard the write: a backend switch during the request invalidates results.
-    if _is_superseded(state, generation) or (
-        expected_month is not None and state.selected_month != expected_month
-    ) or state.month_load_generation != request_generation:
+    if (
+        _is_superseded(state, generation)
+        or (expected_month is not None and state.selected_month != expected_month)
+        or state.month_load_generation != request_generation
+    ):
         return False
 
     year_changed = year != state.selected_month.year
@@ -787,9 +791,7 @@ def _dispatch_error_surface(
     """
     action = state.error_action
     message = state.error_message or "Something went wrong. Please try again."
-    request_generation = (
-        state.backend_generation if generation is None else generation
-    )
+    request_generation = state.backend_generation if generation is None else generation
 
     if action is ErrorAction.SNACKBAR_REFRESH:
         _show_snack(page, message, color=ft.Colors.RED_700)
