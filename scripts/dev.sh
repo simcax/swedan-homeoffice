@@ -83,7 +83,7 @@ fi
 echo ">> Database is ready."
 
 echo ">> Running Alembic migrations..."
-uv run alembic -c backend/alembic.ini upgrade head
+uv run python -m backend.migrate
 
 echo ">> Starting backend on http://${BACKEND_HOST}:${BACKEND_PORT} ..."
 uv run uvicorn backend.main:app --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" --reload &
