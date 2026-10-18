@@ -70,10 +70,15 @@ def test_non_compliant_bar_is_red() -> None:
 
 
 def test_none_summary_is_neutral_with_no_label() -> None:
-    """Requirement 8.5: None -> value 0, visible neutral colour, no label."""
+    """Requirement 8.5: None -> value 0, visible neutral colour, no label.
+
+    Per Requirement 4.4 (design.md Feature 2) the neutral colour is the
+    theme-aware ``ft.Colors.SURFACE`` (task 4.1 changed it from
+    ``SURFACE_CONTAINER_HIGHEST``).
+    """
     bar = build_compliance_bar(None)
     assert bar.value == 0
-    assert bar.color == ft.Colors.SURFACE_CONTAINER_HIGHEST
+    assert bar.color == ft.Colors.SURFACE
     assert bar.tooltip is None
 
 

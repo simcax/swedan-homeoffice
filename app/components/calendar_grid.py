@@ -14,6 +14,11 @@ later wire edit/delete behaviour. The callback receives the day-of-month number
 :class:`ft.Container` ``on_long_press`` handler, available in the installed Flet
 1.0.2.
 
+An optional ``on_day_tap`` callback can likewise be supplied so a parent view
+can open the day-type picker when a tile is tapped. It receives the same
+day-of-month number (``int``) and is wired via each tile's ``on_click``
+handler, independently of the long-press hook.
+
 The builder is a pure function; it never starts the Flet runtime and performs
 no I/O.
 
@@ -48,6 +53,7 @@ def build_calendar_grid(
     month: int,
     entries: dict[str, WorkEntry],
     on_day_long_press: Callable[[int], None] | None = None,
+    on_day_tap: Callable[[int], None] | None = None,
 ) -> ft.GridView:
     """Build a monthly calendar grid of color-coded day tiles.
 
@@ -60,6 +66,9 @@ def build_calendar_grid(
         on_day_long_press: Optional callback invoked with the day-of-month
             (``int``) when a tile is long-pressed. Lets the home view wire
             edit/delete later. When ``None``, tiles have no long-press handler.
+        on_day_tap: Optional callback invoked with the day-of-month (``int``)
+            when a tile is tapped. Lets the home view open the day-type picker.
+            When ``None``, tiles have no tap handler.
 
     Returns:
         An :class:`ft.GridView` laid out Mon–Sun. The controls are
@@ -79,6 +88,9 @@ def build_calendar_grid(
 
         if on_day_long_press is not None:
             tile.on_long_press = _make_long_press_handler(day, on_day_long_press)
+
+        if on_day_tap is not None:
+            tile.on_click = _make_tap_handler(day, on_day_tap)
 
         controls.append(tile)
 
@@ -105,6 +117,17 @@ def _make_long_press_handler(
     day: int, callback: Callable[[int], None]
 ) -> Callable[[ft.ControlEvent], None]:
     """Bind ``day`` to ``callback`` for a single tile's long-press event."""
+
+    def _handler(_event: ft.ControlEvent) -> None:
+        callback(day)
+
+    return _handler
+
+
+def _make_tap_handler(
+    day: int, callback: Callable[[int], None]
+) -> Callable[[ft.ControlEvent], None]:
+    """Bind ``day`` to ``callback`` for a single tile's tap (click) event."""
 
     def _handler(_event: ft.ControlEvent) -> None:
         callback(day)

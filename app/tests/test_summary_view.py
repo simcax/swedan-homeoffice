@@ -142,9 +142,13 @@ class TestBuildMonthlyCard:
         assert bar.color == ft.Colors.RED_700
 
     def test_none_summary_is_neutral_placeholder(self) -> None:
+        # The monthly card's neutral bar is produced by ``build_compliance_bar``
+        # (see build_monthly_card), so task 4.1's change of the ``summary is
+        # None`` neutral colour to the theme-aware ``ft.Colors.SURFACE``
+        # (Requirement 4.4) flows through here unchanged.
         card = build_monthly_card(None)
         bar = next(c for c in _flatten(card) if isinstance(c, ft.ProgressBar))
-        assert bar.color == ft.Colors.SURFACE_CONTAINER_HIGHEST
+        assert bar.color == ft.Colors.SURFACE
         assert any("No summary" in t for t in _texts(card))
 
 

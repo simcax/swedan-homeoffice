@@ -46,7 +46,7 @@ from app.main import (
     resolve_base_url,
     resolve_initial_route,
 )
-from app.state import AppState
+from app.state import AppState, Screen
 
 
 def _fake_storage(*, get_return: object = None) -> MagicMock:
@@ -58,7 +58,10 @@ def _fake_storage(*, get_return: object = None) -> MagicMock:
 
 
 def _app_state() -> AppState:
-    return AppState(selected_month=date(2025, 6, 1))
+    # Default to the unlocked HOME screen so routed-view tests exercise the
+    # home/summary/settings bodies. The login gate (``Screen.LOGIN``) is covered
+    # by its own dedicated tests below.
+    return AppState(selected_month=date(2025, 6, 1), screen=Screen.HOME)
 
 
 def _entry(day: int, location: WorkLocation = WorkLocation.DENMARK) -> WorkEntry:
@@ -179,6 +182,9 @@ async def test_main_mounts_storage_before_resolving_base_url(monkeypatch):
 
     monkeypatch.setattr(app_main, "resolve_base_url", _resolve)
     monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
+    # A stored secret resolves startup to the HOME screen so the routed views
+    # below are exercised (the login gate has its own dedicated tests).
+    monkeypatch.setattr(app_main, "load_secret", AsyncMock(return_value="s3cret"))
 
     await app_main.main(page)
 
@@ -200,6 +206,13 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
     # Supply a mock views list: the direct startup render clears/appends it,
     # and the assertions below read page.views.append.call_args.
     page.views = MagicMock()
+    # ``main`` wraps ``page.run_task`` in ``_guarded_run_task`` (task 11.2) to
+    # centrally catch ``AuthError``, reassigning ``page.run_task`` to a plain
+    # function. The wrapper delegates to the ORIGINAL ``run_task`` captured at
+    # wrap time, so grab a reference to that MagicMock now — the scheduled
+    # (guarded) coroutine lands on its ``call_args`` even after reassignment.
+    run_task_mock = MagicMock()
+    page.run_task = run_task_mock
     storage = ft.SharedPreferences()
     client = MagicMock()
     client.base_url = DEFAULT_API_BASE_URL
@@ -214,6 +227,9 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
     monkeypatch.setattr(app_main, "APIClient", lambda _url: client)
     monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
     monkeypatch.setattr(app_main, "_first_of_this_month", lambda: date(2025, 6, 1))
+    # A stored secret resolves startup to the HOME screen so the routed views
+    # below are exercised (the login gate has its own dedicated tests).
+    monkeypatch.setattr(app_main, "load_secret", AsyncMock(return_value="s3cret"))
 
     await app_main.main(page)
     page.on_route_change(MagicMock(route=ROUTE_HOME))
@@ -235,7 +251,11 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
     next(button for button in buttons if button.data is WorkLocation.DENMARK).on_click(
         MagicMock()
     )
-    operation = page.run_task.call_args.args[0]
+    # The click schedules the home operation through the wrapped ``run_task``,
+    # which delegates to the original ``run_task_mock`` with the guarded
+    # coroutine. Capture that guarded coroutine factory so awaiting it runs the
+    # real home operation (via the ``AuthError`` guard installed by task 11.2).
+    operation = run_task_mock.call_args.args[0]
 
     page.route = ROUTE_SUMMARY
     page.on_route_change(MagicMock(route=ROUTE_SUMMARY))
@@ -282,6 +302,9 @@ async def _run_main_with_counted_render(monkeypatch, page) -> list[str | None]:
         app_main, "resolve_base_url", AsyncMock(return_value=DEFAULT_API_BASE_URL)
     )
     monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
+    # A stored secret resolves startup to the HOME screen so the routed views
+    # below are exercised (the login gate has its own dedicated tests).
+    monkeypatch.setattr(app_main, "load_secret", AsyncMock(return_value="s3cret"))
 
     def _record_render(_page, _state, _client, _storage, *, route=None, **_kwargs):
         rendered.append(route)
@@ -350,6 +373,9 @@ async def test_launch_route_change_for_initial_route_is_coalesced(monkeypatch):
         app_main, "resolve_base_url", AsyncMock(return_value=DEFAULT_API_BASE_URL)
     )
     monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
+    # A stored secret resolves startup to the HOME screen so the routed paint
+    # path is exercised (the login gate has its own dedicated tests).
+    monkeypatch.setattr(app_main, "load_secret", AsyncMock(return_value="s3cret"))
     monkeypatch.setattr(
         app_main,
         "initial_render",

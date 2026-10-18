@@ -26,8 +26,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from backend import main as main_module
+from backend.config import get_settings
 from backend.database import DatabaseConfigError
 from backend.main import create_app
+
+from .conftest import TEST_SHARED_SECRET
 
 
 def _app_with_validation(enabled: bool):
@@ -47,8 +50,16 @@ class TestLifespanValidationDisabled:
 
 
 class TestLifespanValidationEnabledSuccess:
-    async def test_validates_config_before_serving(self) -> None:
+    async def test_validates_config_before_serving(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         app = _app_with_validation(True)
+
+        # Startup also validates APP_SHARED_SECRET (Requirement 7.4); supply it
+        # via the environment and clear the cached settings so the lifespan
+        # reads the known value instead of aborting.
+        monkeypatch.setenv("APP_SHARED_SECRET", TEST_SHARED_SECRET)
+        get_settings.cache_clear()
 
         call_order: list[str] = []
 
@@ -61,6 +72,7 @@ class TestLifespanValidationEnabledSuccess:
                 # Reaching here means startup completed and the app is serving.
                 call_order.append("serving")
 
+        get_settings.cache_clear()
         assert call_order == ["get_engine", "serving"]
 
 

@@ -56,6 +56,12 @@ import httpx
 from app.api_client import APIClient, APIError, WorkEntry, WorkLocation
 from app.components.calendar_grid import build_calendar_grid
 from app.components.compliance_bar import build_compliance_bar
+from app.components.day_type_picker import (
+    apply_day_type,
+    build_day_type_picker,
+    can_open_picker,
+    clear_day_type,
+)
 from app.concurrency import GuardKind, WriteGuard, backend_superseded
 from app.state import AppState
 
@@ -592,7 +598,12 @@ def build_home_view(
     def _on_day_long_press(day: int) -> None:
         _handle_long_press(page, state, api_client, day, _refresh)
 
-    calendar_holder = ft.Container(content=_build_grid(state, _on_day_long_press))
+    def _on_day_tap(day: int) -> None:
+        _handle_tap(page, state, api_client, day, _refresh)
+
+    calendar_holder = ft.Container(
+        content=_build_grid(state, _on_day_long_press, _on_day_tap)
+    )
 
     def _refresh() -> None:
         """Rebuild every stateful control from ``state`` and repaint."""
@@ -612,7 +623,7 @@ def build_home_view(
         error_text.visible = inline
 
         month_label.value = _month_title(state.selected_month)
-        calendar_holder.content = _build_grid(state, _on_day_long_press)
+        calendar_holder.content = _build_grid(state, _on_day_long_press, _on_day_tap)
         if on_state_change is None:
             page.update()
         else:
@@ -708,17 +719,20 @@ def _month_title(selected: date) -> str:
 def _build_grid(
     state: AppState,
     on_day_long_press: Callable[[int], None] | None = None,
+    on_day_tap: Callable[[int], None] | None = None,
 ) -> ft.GridView:
     """Build the calendar grid for the currently selected month.
 
     ``on_day_long_press`` is forwarded to :func:`build_calendar_grid` so each
-    logged tile can open the edit/delete menu on long-press.
+    logged tile can open the edit/delete menu on long-press. ``on_day_tap`` is
+    forwarded so any past-or-today tile can open the day-type picker on tap.
     """
     return build_calendar_grid(
         state.selected_month.year,
         state.selected_month.month,
         state.entries,
         on_day_long_press,
+        on_day_tap,
     )
 
 
@@ -835,6 +849,103 @@ def _handle_long_press(
         return
 
     _open_action_dialog(page, state, api_client, entry, refresh)
+
+
+# ---------------------------------------------------------------------------
+# day-type picker flow (task 3.2)
+# ---------------------------------------------------------------------------
+
+
+def _handle_tap(
+    page: ft.Page,
+    state: AppState,
+    api_client: APIClient,
+    day: int,
+    refresh: Callable[[], None],
+) -> None:
+    """Open the day-type picker for the tapped ``day`` when it is eligible.
+
+    Resolves ``day`` to a concrete :class:`date` in the selected month and
+    checks the eligibility gate: a tap on a future date leaves the picker
+    closed and the calendar state unchanged (Requirement 1.5). Otherwise the
+    picker opens pre-marked with the day's currently recorded location (if any)
+    and wired to the upsert / clear / dismiss handlers (Requirements 1.1, 1.4).
+    """
+    tapped = date(state.selected_month.year, state.selected_month.month, day)
+    if not can_open_picker(tapped):
+        return
+
+    _open_day_type_picker(page, state, api_client, tapped, refresh)
+
+
+def _open_day_type_picker(
+    page: ft.Page,
+    state: AppState,
+    api_client: APIClient,
+    work_date: date,
+    refresh: Callable[[], None],
+) -> None:
+    """Build and show the day-type picker for ``work_date``.
+
+    The picker is seeded with ``state.entries.get(iso)`` so an already-logged
+    day is shown with its recorded location marked (Requirement 1.3). Selecting
+    a location runs :func:`apply_day_type` (Requirements 2.4, 2.6); choosing
+    Clear runs :func:`clear_day_type` (Requirements 3.2, 3.3, 3.5); both close
+    the dialog and refresh the compliance bar / recolor the tile via
+    ``refresh``. Dismissing simply closes the dialog without touching state
+    (Requirement 1.4).
+    """
+    iso_date = work_date.isoformat()
+    current = state.entries.get(iso_date)
+
+    def _on_select(location: WorkLocation) -> None:
+        page.pop_dialog()
+
+        async def _task() -> None:
+            # Capture the backend era so a mid-request switch is dropped (Fix A).
+            gen = state.backend_generation
+            ok = await apply_day_type(
+                state, api_client, work_date, location, generation=gen
+            )
+            refresh()
+            if ok:
+                _show_snack(page, "Day updated.", color=ft.Colors.GREEN_700)
+            else:
+                _dispatch_error_surface(
+                    page, state, api_client, refresh, generation=gen
+                )
+
+        page.run_task(_task)
+
+    def _on_clear() -> None:
+        page.pop_dialog()
+
+        async def _task() -> None:
+            # Capture the backend era so a mid-request switch is dropped (Fix A).
+            gen = state.backend_generation
+            ok = await clear_day_type(state, api_client, work_date, generation=gen)
+            refresh()
+            if ok:
+                _show_snack(page, "Day cleared.", color=ft.Colors.GREEN_700)
+            else:
+                _dispatch_error_surface(
+                    page, state, api_client, refresh, generation=gen
+                )
+
+        page.run_task(_task)
+
+    def _on_dismiss() -> None:
+        # Close the picker and leave the entry unchanged (Requirement 1.4).
+        page.pop_dialog()
+
+    dialog = build_day_type_picker(
+        work_date,
+        current,
+        on_select=_on_select,
+        on_clear=_on_clear,
+        on_dismiss=_on_dismiss,
+    )
+    page.show_dialog(dialog)
 
 
 def _open_action_dialog(

@@ -19,10 +19,42 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from backend.config import Settings, get_settings
 from backend.models import Base
 
 # In-memory SQLite via the async aiosqlite driver.
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+# Known shared secret used by the auth guard in integration tests. The routers
+# are mounted with the ``verify_api_key`` dependency (Requirements 7.2, 7.3),
+# so every request must carry a matching ``X-API-Key`` header. Tests override
+# ``get_settings`` with :func:`settings_override` to supply this value without
+# touching the process environment, and send it via :data:`AUTH_HEADERS`.
+TEST_SHARED_SECRET = "test-shared-secret"
+
+#: Default headers that satisfy the ``verify_api_key`` guard in tests.
+AUTH_HEADERS = {"X-API-Key": TEST_SHARED_SECRET}
+
+
+def settings_override() -> Settings:
+    """Return a :class:`Settings` carrying the known test shared secret.
+
+    Used as a ``get_settings`` dependency override so the ``verify_api_key``
+    guard accepts :data:`AUTH_HEADERS` without reading ``APP_SHARED_SECRET``
+    from the environment.
+    """
+    return Settings(app_shared_secret=TEST_SHARED_SECRET)  # type: ignore[call-arg]
+
+
+# Re-exported so tests can register the override with
+# ``app.dependency_overrides[get_settings] = settings_override``.
+__all__ = [
+    "AUTH_HEADERS",
+    "TEST_DATABASE_URL",
+    "TEST_SHARED_SECRET",
+    "get_settings",
+    "settings_override",
+]
 
 
 @pytest_asyncio.fixture

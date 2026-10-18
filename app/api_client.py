@@ -87,19 +87,45 @@ class APIError(Exception):
     """
 
 
+class AuthError(APIError):
+    """Raised when the backend rejects the shared secret with HTTP 401.
+
+    A subclass of :class:`APIError` so existing ``except APIError`` handlers
+    keep working, while callers that need to distinguish a rejected secret
+    from other failures can catch :class:`AuthError` specifically and return
+    the user to the login screen (Requirement 8.1).
+    """
+
+
 # Client --------------------------------------------------------------------
 
 
 class APIClient:
     """Thin async wrapper around the backend REST API."""
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, secret: str | None = None) -> None:
         self._base_url = base_url.rstrip("/")
+        self._secret = secret or None
 
     @property
     def base_url(self) -> str:
         """The normalised base URL this client issues requests against."""
         return self._base_url
+
+    # -- shared secret -----------------------------------------------------
+
+    def set_secret(self, secret: str | None) -> None:
+        """Set (or clear) the shared secret sent as the ``X-API-Key`` header."""
+        self._secret = secret or None
+
+    @property
+    def has_secret(self) -> bool:
+        """True when a non-empty shared secret is configured."""
+        return bool(self._secret)
+
+    def _headers(self) -> dict[str, str]:
+        """Return the auth headers to merge into every outgoing request."""
+        return {"X-API-Key": self._secret} if self._secret else {}
 
     # -- public API --------------------------------------------------------
 
@@ -189,15 +215,23 @@ class APIClient:
         url = f"{self._base_url}{path}"
         last_error: Exception | None = None
 
+        # Merge the shared-secret header into any caller-supplied headers.
+        headers = {**self._headers(), **(kwargs.pop("headers", None) or {})}
+
         for attempt in range(MAX_ATTEMPTS):
             try:
                 async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS) as client:
                     http_method = getattr(client, method)
-                    response = await http_method(url, **kwargs)
+                    response = await http_method(url, headers=headers, **kwargs)
             except httpx.TimeoutException as exc:
                 raise APIError(f"Request to {url} timed out") from exc
             except httpx.HTTPError as exc:
                 raise APIError(f"Request to {url} failed: {exc}") from exc
+
+            # A rejected secret is terminal and takes precedence over the 503
+            # back-off and the caller's 409 PATCH-retry: never retry a 401.
+            if response.status_code == 401:
+                raise AuthError(f"Shared secret rejected by {url}")
 
             if response.status_code == 503:
                 last_error = APIError(f"Service unavailable for {url}")

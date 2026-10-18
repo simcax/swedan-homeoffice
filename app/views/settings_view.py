@@ -53,6 +53,8 @@ class KeyValueStorage(Protocol):
 
     async def set(self, key: str, value: object) -> bool: ...
 
+    async def remove(self, key: str) -> bool: ...
+
 
 # ---------------------------------------------------------------------------
 # persistence helpers (pure of the Flet runtime, so directly testable)

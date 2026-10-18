@@ -20,19 +20,33 @@ This module contains pure dataclass logic only; it never starts the Flet
 runtime. Mutations are applied in place and the view layer is responsible for
 calling ``page.update()`` afterwards.
 
-Requirements: 1.4, 1.5, 8.5
+Requirements: 1.4, 1.5, 5.1, 8.3, 8.5
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date
+from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 from app.api_client import AnnualSummary, ComplianceSummary, WorkEntry
 
 if TYPE_CHECKING:
     from app.views.home_view import ErrorAction
+
+
+class Screen(Enum):
+    """The gated screen currently shown by the Flet app.
+
+    ``LOGIN`` withholds the front page until a shared secret is supplied;
+    ``HOME`` shows the calendar front page once a secret is configured.
+
+    Requirements: 5.1, 8.3
+    """
+
+    LOGIN = auto()
+    HOME = auto()
 
 
 @dataclass
@@ -60,6 +74,12 @@ class AppState:
     month_load_generation: int = 0
     # Ensures the latest annual-summary request wins when refreshes overlap.
     annual_summary_generation: int = 0
+    # The gated screen currently shown by the app. Starts at ``LOGIN`` so the
+    # front page is withheld until a shared secret is supplied (Req 5.1).
+    screen: Screen = Screen.LOGIN
+    # Drives the "secret rejected" message on the login screen after a backend
+    # 401 sends the user back to login (Req 8.3).
+    auth_rejected: bool = False
 
     def apply_entry(self, entry: WorkEntry) -> None:
         """Insert or replace ``entry`` keyed by its ISO date string.
