@@ -182,6 +182,38 @@ class APIClient:
         )
         return AnnualSummary.model_validate(response.json())
 
+    async def verify_secret(self, year: int, month: int) -> bool:
+        """Probe the backend to check the configured secret is accepted.
+
+        Issues a single guarded request (the monthly summary) so the backend's
+        ``X-API-Key`` check runs. A rejected secret surfaces as
+        :class:`AuthError` (HTTP 401) and is propagated so the caller can keep
+        the user on the login screen; any other failure (network, timeout,
+        5xx) is treated as "cannot verify right now" and returns ``False``
+        without claiming the secret is wrong, so a transient outage never
+        locks a user out with a valid secret.
+
+        Args:
+            year: Year of the summary used as the probe.
+            month: Month of the summary used as the probe.
+
+        Returns:
+            ``True`` when the backend accepted the secret.
+
+        Raises:
+            AuthError: When the backend rejected the secret with HTTP 401.
+        """
+        try:
+            await self.get_summary(year, month)
+        except AuthError:
+            # A rejected secret is a definitive answer — re-raise it.
+            raise
+        except APIError:
+            # Any non-auth failure means we could not verify; do not treat a
+            # transient fault as a wrong secret.
+            return False
+        return True
+
     # -- internals ---------------------------------------------------------
 
     async def _patch_existing(

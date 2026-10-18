@@ -44,6 +44,12 @@ _EMPTY_SECRET_MESSAGE = "Please enter the shared secret."
 # Message shown when returning to login after a backend 401 (Requirement 8.3).
 _REJECTED_SECRET_MESSAGE = "Secret rejected. Please re-enter the shared secret."
 
+# Message shown when the secret could not be verified (backend unreachable /
+# a transient failure during login) — distinct from a rejected secret.
+VERIFY_FAILED_MESSAGE = (
+    "Could not verify the secret right now. Check your connection and try again."
+)
+
 
 # ---------------------------------------------------------------------------
 # validation (pure of the Flet runtime, so directly testable)
@@ -157,6 +163,7 @@ def build_login_view(
     on_submit: Callable[[str], None],
     *,
     auth_rejected: bool = False,
+    notice: str | None = None,
 ) -> ft.Container:
     """Build the login screen gating access to the front page.
 
@@ -171,10 +178,19 @@ def build_login_view(
     ``401`` — the "secret rejected" message is shown immediately so they know
     why they are back on the login screen (Requirement 8.3).
 
+    When ``notice`` is set it is shown as an informational message above the
+    form. It is used for conditions distinct from a rejected secret — most
+    notably "could not verify the secret right now" when the backend was
+    unreachable during a login attempt, so the user understands they were kept
+    on login because verification could not complete, not because the secret
+    was wrong.
+
     Args:
         page: The active Flet page; used to repaint after validation.
         on_submit: Callback invoked with the raw secret once it validates.
         auth_rejected: Whether to show the "secret rejected" message on load.
+        notice: Optional informational message (e.g. verification could not be
+            completed) shown above the form.
 
     Returns:
         An :class:`ft.Container` holding the login form.
@@ -207,22 +223,31 @@ def build_login_view(
         on_click=_submit,
     )
 
-    return ft.Container(
-        content=ft.Column(
-            controls=[
-                ft.Text("Enter shared secret", weight=ft.FontWeight.BOLD, size=18),
-                ft.Text(
-                    "This app is protected. Enter the shared secret to continue.",
-                    color=ft.Colors.ON_SURFACE_VARIANT,
-                ),
-                secret_field,
-                ft.Row(
-                    controls=[submit_button],
-                    alignment=ft.MainAxisAlignment.END,
-                ),
-            ],
-            spacing=16,
+    controls: list[ft.Control] = [
+        ft.Text("Enter shared secret", weight=ft.FontWeight.BOLD, size=18),
+        ft.Text(
+            "This app is protected. Enter the shared secret to continue.",
+            color=ft.Colors.ON_SURFACE_VARIANT,
         ),
+    ]
+
+    # An informational notice (e.g. "could not verify right now") is shown
+    # above the field, distinct from the inline "secret rejected" error.
+    if notice:
+        controls.append(ft.Text(notice, color=ft.Colors.ERROR))
+
+    controls.extend(
+        [
+            secret_field,
+            ft.Row(
+                controls=[submit_button],
+                alignment=ft.MainAxisAlignment.END,
+            ),
+        ]
+    )
+
+    return ft.Container(
+        content=ft.Column(controls=controls, spacing=16),
         padding=16,
         expand=True,
     )

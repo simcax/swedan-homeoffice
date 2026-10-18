@@ -445,6 +445,102 @@ def test_build_view_home_route():
     assert len(view.controls) == 1
 
 
+def test_build_view_routed_screen_has_logout_action():
+    # Every unlocked/routed screen carries a top app bar with a logout action
+    # so the user can always end the session and return to login.
+    clicks: list[bool] = []
+    page = MagicMock(spec=ft.Page)
+    page.route = ROUTE_HOME
+    view = build_view(
+        page,
+        ROUTE_HOME,
+        _app_state(),
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+        on_logout=lambda: clicks.append(True),
+    )
+
+    assert view.appbar is not None
+    logout_buttons = [
+        c
+        for c in (view.appbar.actions or [])
+        if isinstance(c, ft.IconButton) and c.icon == ft.Icons.LOGOUT
+    ]
+    assert logout_buttons, "expected a logout IconButton in the app bar"
+
+    # Tapping it invokes the wired logout callback.
+    logout_buttons[0].on_click(MagicMock())
+    assert clicks == [True]
+
+
+def test_build_view_omits_logout_action_when_not_wired():
+    # With no on_logout callback (e.g. in tests), the app bar still builds but
+    # carries no logout action.
+    view = _build(ROUTE_HOME)
+
+    assert view.appbar is not None
+    assert not [
+        c
+        for c in (view.appbar.actions or [])
+        if isinstance(c, ft.IconButton) and c.icon == ft.Icons.LOGOUT
+    ]
+
+
+def test_build_view_login_screen_has_no_appbar():
+    # The login (gated) screen must not show the app bar / logout action.
+    page = MagicMock(spec=ft.Page)
+    page.route = ROUTE_HOME
+    state = AppState(selected_month=date(2025, 6, 1), screen=Screen.LOGIN)
+    view = build_view(
+        page,
+        ROUTE_HOME,
+        state,
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+        on_logout=lambda: None,
+    )
+
+    assert view.appbar is None
+
+
+def test_build_view_login_screen_surfaces_login_notice():
+    # A verification-failed notice stored on the state must be rendered on the
+    # login screen so the user knows they were kept on login because the secret
+    # could not be verified (not because it was rejected).
+    from app.views.login_view import VERIFY_FAILED_MESSAGE
+
+    page = MagicMock(spec=ft.Page)
+    page.route = ROUTE_HOME
+    state = AppState(
+        selected_month=date(2025, 6, 1),
+        screen=Screen.LOGIN,
+        login_notice=VERIFY_FAILED_MESSAGE,
+    )
+    view = build_view(
+        page,
+        ROUTE_HOME,
+        state,
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+    )
+
+    texts: list[str] = []
+
+    def _walk(node: object) -> None:
+        if isinstance(node, ft.Text) and node.value:
+            texts.append(node.value)
+        content = getattr(node, "content", None)
+        if content is not None:
+            _walk(content)
+        for child in getattr(node, "controls", []) or []:
+            _walk(child)
+
+    for control in view.controls:
+        _walk(control)
+
+    assert VERIFY_FAILED_MESSAGE in texts
+
+
 def test_build_view_summary_route():
     view = _build(ROUTE_SUMMARY)
 
