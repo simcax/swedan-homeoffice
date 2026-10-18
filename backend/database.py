@@ -58,26 +58,35 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def _load_settings() -> Settings:
-    """Load ``DATABASE_URL`` settings, raising a clear error when absent.
+def _resolve_raw_url() -> str:
+    """Return the raw (verbatim-scheme) database URL from settings.
+
+    Resolves the connection string from ``DATABASE_URL`` or the
+    ``POSTGRESQL_ADDON_*`` variables (see
+    :attr:`backend.config.Settings.effective_database_url`), translating any
+    configuration failure into :class:`DatabaseConfigError` with a clear,
+    logged message so startup validation and logs point operators at the fix.
 
     Raises:
-        DatabaseConfigError: When ``DATABASE_URL`` is not set (or invalid). The
-            message identifies the missing variable so startup validation and
-            logs point operators at the fix.
+        DatabaseConfigError: When no usable connection string can be resolved.
     """
     try:
-        return Settings()  # type: ignore[call-arg]
-    except Exception as exc:  # pydantic ValidationError when DATABASE_URL missing
+        return Settings().effective_database_url  # type: ignore[call-arg]
+    except DatabaseConfigurationError as exc:
         logger.critical(
-            "DATABASE_URL environment variable is not set. "
-            "The backend cannot start without a database connection. "
-            "Set DATABASE_URL to a valid PostgreSQL connection string and try again."
+            "No database configuration found. The backend cannot start without "
+            "a database connection. Set DATABASE_URL to a valid PostgreSQL "
+            "connection string, or link a Clever Cloud PostgreSQL add-on so the "
+            "POSTGRESQL_ADDON_* variables are injected, and try again."
+        )
+        raise DatabaseConfigError(str(exc)) from exc
+    except Exception as exc:  # unexpected pydantic/validation failure
+        logger.critical(
+            "Failed to load database configuration from the environment: %s",
+            exc,
         )
         raise DatabaseConfigError(
-            "Missing required environment variable DATABASE_URL. "
-            "Set it to a PostgreSQL connection string, e.g. "
-            "postgresql://user:password@host:5432/dbname"
+            "Failed to load database configuration from the environment."
         ) from exc
 
 
@@ -86,24 +95,25 @@ def resolve_database_url() -> str:
 
     This is the single, shared resolver for the connection string. It reads
     from the same source as the application engine — the process environment
-    only (no ``.env`` fallback), via pydantic-settings — and applies the
-    asyncpg scheme rewrite. Alembic's ``env.py`` uses this (instead of reading
-    ``os.environ`` directly) so startup validation and migrations always target
-    the exact same environment-only configuration.
+    only (no ``.env`` fallback), via pydantic-settings — resolving either an
+    explicit ``DATABASE_URL`` or the Clever Cloud ``POSTGRESQL_ADDON_*``
+    variables, and applies the asyncpg scheme rewrite. Alembic's ``env.py``
+    uses this (instead of reading ``os.environ`` directly) so startup
+    validation and migrations always target the exact same environment-only
+    configuration.
 
     Raises:
-        DatabaseConfigError: When ``DATABASE_URL`` cannot be resolved.
+        DatabaseConfigError: When no usable connection string can be resolved.
     """
-    return _rewrite_scheme(_load_settings().database_url)
+    return _rewrite_scheme(_resolve_raw_url())
 
 
 def get_engine() -> AsyncEngine:
     """Return the process-wide async engine, creating it on first use."""
     global _engine
     if _engine is None:
-        settings = _load_settings()
         _engine = create_async_engine(
-            _rewrite_scheme(settings.database_url),
+            resolve_database_url(),
             echo=False,
             pool_pre_ping=True,
         )

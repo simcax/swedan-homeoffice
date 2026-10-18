@@ -124,6 +124,16 @@ def create_app(validate_config: bool | None = None) -> FastAPI:
     app.include_router(entries.router)
     app.include_router(summary.router)
 
+    # Optionally serve the Flet web UI from this same instance so a single
+    # Clever Cloud app (and one PostgreSQL add-on) hosts both the API and the
+    # frontend — no second scaler to pay for. Enabled by setting SERVE_FRONTEND
+    # to a truthy value (the production app sets it; tests leave it off so they
+    # neither import Flet nor mount the UI). The API routers above are
+    # registered first and live under ``/api/v1/...``; mounting the Flet app at
+    # ``/`` is safe because explicit routes take precedence over a mount.
+    if _serve_frontend_enabled():
+        _mount_frontend(app)
+
     # Database connectivity failures must surface as HTTP 503, not 500
     # (Requirements 9.5 and 10.5; design "Database Unavailable" contract).
     # SQLAlchemy raises ``OperationalError`` when the server is unreachable, and
@@ -150,6 +160,42 @@ def create_app(validate_config: bool | None = None) -> FastAPI:
     app.add_exception_handler(InterfaceError, _database_unavailable_handler)  # type: ignore[arg-type]
 
     return app
+
+
+def _serve_frontend_enabled() -> bool:
+    """Return whether the Flet web UI should be mounted on this app.
+
+    Controlled by the ``SERVE_FRONTEND`` environment variable so a single
+    deployment can host both the API and the frontend. Off by default (tests
+    and API-only deployments), so importing Flet is avoided unless requested.
+    """
+    return os.environ.get("SERVE_FRONTEND", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _mount_frontend(app: FastAPI) -> None:
+    """Mount the Flet web UI at ``/`` using Flet's FastAPI integration.
+
+    ``flet.fastapi.app(main)`` builds a FastAPI sub-app that serves the Flet
+    web client (its Flutter assets ship with the ``flet`` package, so no
+    Flutter SDK build step is needed) and the websocket/session endpoints the
+    client talks to. Importing ``app.main`` here — rather than at module top
+    level — keeps the heavy Flet import out of the API-only path and out of the
+    test suite.
+
+    The Flet app resolves its backend URL from ``API_BASE_URL`` (see
+    ``app.main.resolve_base_url``); when co-hosted it should point at this same
+    origin.
+    """
+    import flet.fastapi as flet_fastapi
+
+    from app.main import main as flet_main
+
+    app.mount("/", flet_fastapi.app(flet_main))
 
 
 # Module-level ASGI app. Started in production via CC_PYTHON_UV_RUN_COMMAND
