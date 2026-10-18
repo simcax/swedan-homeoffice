@@ -57,6 +57,7 @@ import os
 import flet as ft
 
 from app.api_client import APIClient, APIError
+from app.concurrency import GuardKind, WriteGuard, backend_superseded
 from app.state import AppState
 from app.views.home_view import build_home_view
 from app.views.settings_view import (
@@ -167,22 +168,16 @@ async def load_annual_summary(
         ``True`` when the annual summary was fetched and stored, ``False`` when
         the request failed (or was superseded) and the previous value was kept.
     """
-    if generation is not None and state.backend_generation != generation:
+    if backend_superseded(state, generation):
         return False
 
-    year = state.selected_month.year
-    state.annual_summary_generation += 1
-    request_generation = state.annual_summary_generation
+    guard = WriteGuard.capture(state, kind=GuardKind.ANNUAL, generation=generation)
     try:
-        annual = await api_client.get_annual_summary(year)
+        annual = await api_client.get_annual_summary(guard.year)
     except APIError:
         return False
 
-    if (
-        request_generation != state.annual_summary_generation
-        or state.selected_month.year != year
-        or (generation is not None and state.backend_generation != generation)
-    ):
+    if guard.is_stale(state):
         return False
 
     state.annual_summary = annual
