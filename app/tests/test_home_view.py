@@ -352,9 +352,7 @@ class TestBuildHomeView:
         state = _state()
         changed = MagicMock()
         client = MagicMock()
-        client.post_entry = AsyncMock(
-            return_value=_entry(10, WorkLocation.DENMARK)
-        )
+        client.post_entry = AsyncMock(return_value=_entry(10, WorkLocation.DENMARK))
         client.get_summary = AsyncMock(return_value=_summary())
         client.get_annual_summary = AsyncMock(return_value=_annual())
 
@@ -670,9 +668,7 @@ class TestBackendGenerationGuard:
         page = MagicMock(spec=ft.Page)
         refresh = MagicMock()
 
-        _dispatch_error_surface(
-            page, state, client, refresh, generation=generation
-        )
+        _dispatch_error_surface(page, state, client, refresh, generation=generation)
         await page.run_task.call_args.args[0]()
 
         assert state.entries == {}
@@ -876,9 +872,7 @@ class TestAnnualRefreshOnYearChange:
         client = MagicMock()
         client.get_annual_summary = AsyncMock(side_effect=_annual_for_year)
 
-        await _refresh_annual(
-            state, client, generation=state.backend_generation
-        )
+        await _refresh_annual(state, client, generation=state.backend_generation)
 
         assert state.annual_summary is previous
 
@@ -903,15 +897,11 @@ class TestAnnualRefreshOnYearChange:
         client.get_annual_summary = AsyncMock(side_effect=_annual_for_year)
 
         old_request = asyncio.create_task(
-            _refresh_annual(
-                state, client, generation=state.backend_generation
-            )
+            _refresh_annual(state, client, generation=state.backend_generation)
         )
         await started[0].wait()
         new_request = asyncio.create_task(
-            _refresh_annual(
-                state, client, generation=state.backend_generation
-            )
+            _refresh_annual(state, client, generation=state.backend_generation)
         )
         await started[1].wait()
 

@@ -57,6 +57,7 @@ import os
 import flet as ft
 
 from app.api_client import APIClient, APIError
+from app.concurrency import GuardKind, WriteGuard, backend_superseded
 from app.state import AppState
 from app.views.home_view import build_home_view
 from app.views.settings_view import (
@@ -167,22 +168,16 @@ async def load_annual_summary(
         ``True`` when the annual summary was fetched and stored, ``False`` when
         the request failed (or was superseded) and the previous value was kept.
     """
-    if generation is not None and state.backend_generation != generation:
+    if backend_superseded(state, generation):
         return False
 
-    year = state.selected_month.year
-    state.annual_summary_generation += 1
-    request_generation = state.annual_summary_generation
+    guard = WriteGuard.capture(state, kind=GuardKind.ANNUAL, generation=generation)
     try:
-        annual = await api_client.get_annual_summary(year)
+        annual = await api_client.get_annual_summary(guard.year)
     except APIError:
         return False
 
-    if (
-        request_generation != state.annual_summary_generation
-        or state.selected_month.year != year
-        or (generation is not None and state.backend_generation != generation)
-    ):
+    if guard.is_stale(state):
         return False
 
     state.annual_summary = annual
@@ -291,9 +286,7 @@ def build_view(
             on_saved=on_settings_saved,
         )
     else:
-        body = build_home_view(
-            page, state, api_client, on_state_change=on_state_change
-        )
+        body = build_home_view(page, state, api_client, on_state_change=on_state_change)
 
     return ft.View(
         route=resolved,
@@ -301,6 +294,62 @@ def build_view(
         navigation_bar=_build_navigation_bar(page, resolved),
         services=list(services) if services else [],
     )
+
+
+def initial_render(
+    page: ft.Page,
+    state: AppState,
+    api_client: APIClient,
+    storage: KeyValueStorage,
+    *,
+    route: str | None = None,
+    services: list[ft.Service] | None = None,
+    on_settings_saved=None,
+    on_state_change=None,
+) -> None:
+    """Render the view for ``route`` directly into ``page.views``.
+
+    This is the single, runtime-free rendering primitive used for both the
+    startup paint and every subsequent route change. It clears ``page.views``,
+    appends exactly one :func:`build_view` for
+    ``resolve_initial_route(route or page.route)``, and calls ``page.update()``.
+
+    Calling this directly at startup (rather than relying on
+    ``page.navigate`` / ``page.push_route``) guarantees the first view is built
+    and shown even when the target route equals the current route — the usual
+    launch case (``"/"``) in which Flet 1.0.2 may not fire ``on_route_change``,
+    leaving the window blank. Flet 1.0.2 ``Page`` instances expose a ``views``
+    list (a dataclass field) even though ``hasattr(ft.Page, "views")`` is
+    ``False`` at the class level, so ``page.views`` is safe to mutate here.
+
+    Args:
+        page: The active Flet page (or a test double exposing ``views`` and
+            ``update``).
+        state: The shared in-memory :class:`AppState`.
+        api_client: The backend :class:`APIClient`.
+        storage: The async key-value storage service for the settings screen.
+        route: The route to render; defaults to ``page.route`` when ``None``.
+        services: Optional Flet services to mount on the view.
+        on_settings_saved: Optional callback forwarded to the settings view.
+        on_state_change: Optional callback forwarded to the home view and
+            invoked after asynchronous home-view state changes so the active
+            route can be repainted.
+    """
+    target = route if route is not None else page.route
+    page.views.clear()
+    page.views.append(
+        build_view(
+            page,
+            resolve_initial_route(target),
+            state,
+            api_client,
+            storage,
+            services=services,
+            on_settings_saved=on_settings_saved,
+            on_state_change=on_state_change,
+        )
+    )
+    page.update()
 
 
 def _build_navigation_bar(page: ft.Page, active_route: str) -> ft.NavigationBar:
@@ -342,9 +391,17 @@ async def main(page: ft.Page) -> None:
 
     Initialises the shared :class:`AppState` and :class:`APIClient` from the
     resolved base URL, then installs an ``on_route_change`` handler that
-    rebuilds ``page.views`` for the active route. ``page.navigate`` /
-    ``page.push_route`` drive navigation between the home, summary and settings
-    screens.
+    rebuilds ``page.views`` for the active route.
+
+    The first paint is performed **directly** by calling :func:`initial_render`
+    once at startup, rather than via ``page.navigate`` / ``page.push_route``. In
+    Flet 1.0.2 ``page.navigate(route)`` only schedules
+    ``asyncio.create_task(page.push_route(route))``, which round-trips to the
+    client; when the target route equals the current route (the usual launch
+    case, ``"/"``) ``on_route_change`` may never fire, so the view is never
+    built and the window stays blank. Rendering directly guarantees the first
+    view is shown. ``on_route_change`` then handles every subsequent navigation
+    (NavigationBar taps call ``page.navigate(target)`` to a *different* route).
     """
     page.title = "Work Location Tracker"
     page.theme_mode = ft.ThemeMode.SYSTEM
@@ -379,22 +436,52 @@ async def main(page: ft.Page) -> None:
         page.run_task(_reset_and_render)
 
     def _render(route: str | None) -> None:
-        page.views.clear()
-        page.views.append(
-            build_view(
-                page,
-                resolve_initial_route(route),
-                state,
-                api_client,
-                storage,
-                services=[storage],
-                on_settings_saved=_on_settings_saved,
-                on_state_change=lambda: _render(page.route),
-            )
+        # Delegate to the shared, runtime-free rendering primitive, forwarding
+        # the explicit route so same-URL repaints (settings save) and route
+        # changes render exactly the route they were given. ``on_state_change``
+        # repaints the active route after asynchronous home-view updates.
+        initial_render(
+            page,
+            state,
+            api_client,
+            storage,
+            route=route,
+            services=[storage],
+            on_settings_saved=_on_settings_saved,
+            on_state_change=lambda: _render(page.route),
         )
-        page.update()
+
+    # Idempotency guard for the initial paint. Startup renders the first view
+    # DIRECTLY (see below), but in some Flet versions ``on_route_change`` *also*
+    # fires at launch for that same route. Without a guard the first view would
+    # build twice — harmless to display, but it kicks off a duplicate set of
+    # initial data loads.
+    #
+    # The guard makes the *first* initial-route paint happen exactly once,
+    # whichever path reaches it first (a launch-time ``on_route_change`` during
+    # the ``_load_initial_data`` await, or the direct render afterwards), and
+    # suppresses the other. Every genuine navigation (any other route, or a
+    # change after the initial paint) renders normally.
+    initial_route = resolve_initial_route(page.route)
+    initial_render_done = False
+
+    def _render_initial(route: str) -> None:
+        # Paint the initial view at most once. The first caller wins; a second
+        # launch-time call for the same startup route is a no-op.
+        nonlocal initial_render_done
+        if initial_render_done:
+            return
+        initial_render_done = True
+        _render(route)
 
     def _on_route_change(e: ft.RouteChangeEvent) -> None:
+        nonlocal initial_render_done
+        if not initial_render_done and e.route == initial_route:
+            # Launch-time echo of the initial route: perform the one initial
+            # paint through the guarded path rather than re-rendering.
+            _render_initial(e.route)
+            return
+        initial_render_done = True
         _render(e.route)
 
     page.on_route_change = _on_route_change
@@ -403,8 +490,12 @@ async def main(page: ft.Page) -> None:
     # opens populated (Requirements 1.4, 5.1, 6.1).
     await _load_initial_data(state, api_client)
 
-    # Trigger the initial render for whatever route the app launched on.
-    page.navigate(resolve_initial_route(page.route))
+    # Perform the initial render DIRECTLY (not via page.navigate). This builds
+    # and shows the first view regardless of whether on_route_change fires,
+    # which it may not when the launch route already equals the current route
+    # ("/"). The guard ensures the first view is built exactly once even if a
+    # launch-time on_route_change for the same route also arrives.
+    _render_initial(initial_route)
 
 
 async def _load_initial_data(state: AppState, api_client: APIClient) -> None:

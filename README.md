@@ -49,6 +49,53 @@ default `http://127.0.0.1:8080`.
 API_BASE_URL=https://your-backend.example.com uv run python -m app.main
 ```
 
+## Running the full stack locally
+
+The quickest way to try the app end to end is the dev script, which starts a
+PostgreSQL database (Docker), runs migrations, starts the backend, then launches
+the Flet app:
+
+```bash
+scripts/dev.sh            # database + backend + Flet app
+scripts/dev.sh --no-app   # database + backend only (e.g. to curl the API)
+```
+
+Ctrl-C stops the backend the script started; the database keeps running in the
+background. Stop and keep data with `docker compose down`, or wipe it with
+`docker compose down -v`.
+
+### Doing it by hand
+
+If you'd rather run each piece yourself:
+
+```bash
+# 1. Start PostgreSQL (bundled docker-compose service)
+docker compose up -d db
+
+# 2. Start the backend. The backend reads DATABASE_URL from the process
+#    environment ONLY — it does not auto-load .env (by design, Requirement 11.1).
+DATABASE_URL=postgresql://wlt:wlt@127.0.0.1:5432/wlt \
+  uv run uvicorn backend.main:app --host 127.0.0.1 --port 8080 --reload
+
+# 3. Start the Flet app (defaults to http://127.0.0.1:8080)
+uv run python -m app.main
+```
+
+> `uv run python -m backend.main` does **not** start the server — `backend/main.py`
+> only exposes the ASGI `app`; it must be served by uvicorn as shown above.
+
+### Environment variables
+
+Copy `.env.example` to `.env` and fill in values as needed. `.env` is gitignored
+and must never be committed. Because the backend does not read `.env`
+automatically, either use `scripts/dev.sh` (which exports the values) or export
+them yourself: `set -a; source .env; set +a`.
+
+| Variable | Purpose | Local default |
+|---|---|---|
+| `DATABASE_URL` | Backend PostgreSQL connection string | `postgresql://wlt:wlt@127.0.0.1:5432/wlt` |
+| `API_BASE_URL` | URL the Flet app targets | `http://127.0.0.1:8080` |
+
 ## CI/CD
 
 Two GitHub Actions workflows drive continuous integration and deployment:
@@ -87,3 +134,23 @@ The post-build hook runs from the repository root, so Alembic is pointed at the
 config explicitly with `-c backend/alembic.ini`. Keeping the root as the working
 directory ensures `alembic/env.py` can `import backend` while still locating the
 migration scripts under `backend/alembic`.
+
+### Migrations run once, before serving
+
+`alembic upgrade head` runs **only** as this pre-start hook — it is **not** run
+from the FastAPI lifespan. Running it in the lifespan would race when more than
+one process starts at once (multiple uvicorn workers, or `--reload`'s reloader
+plus worker), each calling `upgrade head` against the same database
+concurrently. As a single pre-start step the schema is brought current exactly
+once before any instance serves.
+
+The equivalent of the post-build hook, with `DATABASE_URL` validation and a
+non-zero exit on failure, is also available as a module entry point:
+
+```bash
+uv run python -m backend.migrate
+```
+
+The FastAPI app still validates `DATABASE_URL` on startup (and aborts if it is
+missing), so a mis-configured deployment still fails fast — it just no longer
+migrates from inside the request-serving processes.

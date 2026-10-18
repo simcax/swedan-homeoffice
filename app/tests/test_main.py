@@ -40,6 +40,7 @@ from app.main import (
     ROUTE_SETTINGS,
     ROUTE_SUMMARY,
     build_view,
+    initial_render,
     load_annual_summary,
     reset_for_new_backend,
     resolve_base_url,
@@ -161,6 +162,11 @@ async def test_main_mounts_storage_before_resolving_base_url(monkeypatch):
     page = MagicMock(spec=ft.Page)
     page.route = ROUTE_HOME
     page.services = []
+    # ``ft.Page.views`` is an instance dataclass field, so a spec'd mock does
+    # not auto-create it; supply a mock list so the direct startup render
+    # (initial_render -> page.views.clear()/append()) and the assertions below
+    # can inspect page.views.append.call_args.
+    page.views = MagicMock()
     events = []
 
     monkeypatch.setattr(app_main.ft, "SharedPreferences", lambda: storage)
@@ -191,6 +197,9 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
     page = MagicMock(spec=ft.Page)
     page.route = ROUTE_HOME
     page.services = []
+    # Supply a mock views list: the direct startup render clears/appends it,
+    # and the assertions below read page.views.append.call_args.
+    page.views = MagicMock()
     storage = ft.SharedPreferences()
     client = MagicMock()
     client.base_url = DEFAULT_API_BASE_URL
@@ -199,14 +208,12 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
     client.get_annual_summary = AsyncMock(return_value=_annual())
 
     monkeypatch.setattr(app_main.ft, "SharedPreferences", lambda: storage)
-    monkeypatch.setattr(app_main, "resolve_base_url", AsyncMock(
-        return_value=DEFAULT_API_BASE_URL
-    ))
+    monkeypatch.setattr(
+        app_main, "resolve_base_url", AsyncMock(return_value=DEFAULT_API_BASE_URL)
+    )
     monkeypatch.setattr(app_main, "APIClient", lambda _url: client)
     monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
-    monkeypatch.setattr(
-        app_main, "_first_of_this_month", lambda: date(2025, 6, 1)
-    )
+    monkeypatch.setattr(app_main, "_first_of_this_month", lambda: date(2025, 6, 1))
 
     await app_main.main(page)
     page.on_route_change(MagicMock(route=ROUTE_HOME))
@@ -225,11 +232,9 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
 
     for control in home_view.controls:
         _walk(control)
-    next(
-        button
-        for button in buttons
-        if button.data is WorkLocation.DENMARK
-    ).on_click(MagicMock())
+    next(button for button in buttons if button.data is WorkLocation.DENMARK).on_click(
+        MagicMock()
+    )
     operation = page.run_task.call_args.args[0]
 
     page.route = ROUTE_SUMMARY
@@ -240,6 +245,134 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
     updated_view = page.views.append.call_args.args[0]
     assert updated_view.route == ROUTE_SUMMARY
     assert updated_view is not old_summary_view
+
+
+# ---------------------------------------------------------------------------
+# Initial-render idempotency guard (double-render regression)
+# ---------------------------------------------------------------------------
+#
+# ``main`` paints the first view DIRECTLY at startup AND registers an
+# ``on_route_change`` handler. In some Flet versions ``on_route_change`` also
+# fires at launch for the same route, which would build the first view twice
+# and kick off a duplicate set of initial data loads. These tests count calls
+# into ``initial_render`` (the single rendering primitive both paths delegate
+# to) to assert the initial paint happens exactly once.
+
+
+def _render_counting_page(route: str = ROUTE_HOME) -> MagicMock:
+    page = MagicMock(spec=ft.Page)
+    page.route = route
+    page.services = []
+    page.views = MagicMock()
+    return page
+
+
+async def _run_main_with_counted_render(monkeypatch, page) -> list[str | None]:
+    """Run ``main`` with ``initial_render`` replaced by a call recorder.
+
+    Returns the list of ``route`` values each ``initial_render`` call rendered,
+    so a test can assert how many times — and for which routes — the view was
+    painted.
+    """
+    storage = ft.SharedPreferences()
+    rendered: list[str | None] = []
+
+    monkeypatch.setattr(app_main.ft, "SharedPreferences", lambda: storage)
+    monkeypatch.setattr(
+        app_main, "resolve_base_url", AsyncMock(return_value=DEFAULT_API_BASE_URL)
+    )
+    monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
+
+    def _record_render(_page, _state, _client, _storage, *, route=None, **_kwargs):
+        rendered.append(route)
+
+    monkeypatch.setattr(app_main, "initial_render", _record_render)
+
+    await app_main.main(page)
+    return rendered
+
+
+async def test_initial_render_happens_once_without_launch_route_change(monkeypatch):
+    # Baseline: no launch-time on_route_change. The direct startup render paints
+    # the initial route exactly once.
+    page = _render_counting_page(ROUTE_HOME)
+
+    rendered = await _run_main_with_counted_render(monkeypatch, page)
+
+    assert rendered == [ROUTE_HOME]
+
+
+class _EchoingPage:
+    """Minimal page double that fires ``on_route_change`` at launch.
+
+    Real Flet installs the handler via ``page.on_route_change = fn``; some
+    versions then fire it once at launch for the current route. This double
+    reproduces that by invoking the handler for ``self.route`` the moment it is
+    assigned — before ``main`` reaches its direct startup render — so the test
+    exercises the exact ordering the idempotency guard must survive.
+    """
+
+    def __init__(self, route: str) -> None:
+        self.route = route
+        self.title = ""
+        self.theme_mode = None
+        self.services: list = []
+        self.views = MagicMock()
+        self._on_route_change = None
+
+    @property
+    def on_route_change(self):
+        return self._on_route_change
+
+    @on_route_change.setter
+    def on_route_change(self, handler):
+        self._on_route_change = handler
+        # Launch-time echo for the initial route, arriving before the direct
+        # startup render runs.
+        handler(MagicMock(route=self.route))
+
+    def update(self) -> None:
+        pass
+
+    def run_task(self, *_args, **_kwargs) -> None:
+        pass
+
+
+async def test_launch_route_change_for_initial_route_is_coalesced(monkeypatch):
+    # Simulate Flet firing on_route_change at launch for the SAME route as the
+    # direct startup render. The initial view must build exactly once.
+    page = _EchoingPage(ROUTE_HOME)
+    rendered: list[str | None] = []
+    storage = ft.SharedPreferences()
+
+    monkeypatch.setattr(app_main.ft, "SharedPreferences", lambda: storage)
+    monkeypatch.setattr(
+        app_main, "resolve_base_url", AsyncMock(return_value=DEFAULT_API_BASE_URL)
+    )
+    monkeypatch.setattr(app_main, "_load_initial_data", AsyncMock())
+    monkeypatch.setattr(
+        app_main,
+        "initial_render",
+        lambda *a, route=None, **k: rendered.append(route),
+    )
+
+    await app_main.main(page)
+
+    # Exactly one paint despite both the launch echo and the direct render.
+    assert rendered == [ROUTE_HOME]
+
+
+async def test_navigation_after_initial_paint_still_renders(monkeypatch):
+    # After the initial paint, a genuine navigation to a different route must
+    # render normally (the guard only coalesces the launch-time echo).
+    page = _render_counting_page(ROUTE_HOME)
+
+    rendered = await _run_main_with_counted_render(monkeypatch, page)
+    assert rendered == [ROUTE_HOME]
+
+    page.on_route_change(MagicMock(route=ROUTE_SUMMARY))
+
+    assert rendered == [ROUTE_HOME, ROUTE_SUMMARY]
 
 
 # ---------------------------------------------------------------------------
@@ -569,3 +702,184 @@ async def test_reset_clears_stale_state_even_when_new_backend_down():
     # cleared before the fetch, so nothing from the old backend survives.
     assert state.entries == {}
     assert state.annual_summary is None
+
+
+# ---------------------------------------------------------------------------
+# Blank-window regression guards (runtime-free)
+# ---------------------------------------------------------------------------
+#
+# These tests would have caught the original blank-window bug WITHOUT starting
+# the Flet runtime. The bug was that ``main`` triggered the first paint via
+# ``page.navigate(...)`` (which only schedules ``page.push_route``); when the
+# launch route equalled the current route ("/"), ``on_route_change`` never
+# fired, so ``page.views`` stayed empty and the window was blank.
+#
+# The fix renders the first view DIRECTLY through ``initial_render`` (which both
+# ``main``'s startup and ``_render`` now delegate to). The tests below assert
+# the render contract on a fake page: exactly one ``ft.View`` is appended and
+# ``page.update()`` is called.
+
+
+def _fake_page(route: str = ROUTE_HOME) -> MagicMock:
+    """Build a runtime-free page double with a real ``views`` list.
+
+    The double exposes exactly what the render path touches: a mutable
+    ``views`` list, a ``route`` attribute and a ``page.update`` recorder. It is
+    deliberately *not* a ``spec=ft.Page`` mock because ``initial_render`` must
+    operate on the dataclass ``views`` field the way the live page does.
+    """
+    page = MagicMock()
+    page.views = []
+    page.route = route
+    page.update = MagicMock()
+    return page
+
+
+def _flatten(view: ft.View) -> list[object]:
+    """Flatten a view's control tree into a flat list of controls."""
+    out: list[object] = []
+
+    def _walk(node: object) -> None:
+        out.append(node)
+        content = getattr(node, "content", None)
+        if content is not None:
+            _walk(content)
+        for child in getattr(node, "controls", []) or []:
+            _walk(child)
+
+    for control in view.controls:
+        _walk(control)
+    return out
+
+
+def test_build_view_home_body_is_non_empty():
+    # Guard 1: the home route must build a real, non-empty body. A blank window
+    # would show up here as an empty ``controls`` list or a ``None`` body.
+    page = _fake_page(ROUTE_HOME)
+    view = build_view(
+        page,
+        ROUTE_HOME,
+        _app_state(),
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+    )
+
+    assert isinstance(view, ft.View)
+    assert len(view.controls) >= 1
+    assert view.controls[0] is not None
+    assert isinstance(view.controls[0], ft.Control)
+
+
+def test_build_view_home_body_contains_interactive_controls():
+    # Guard 2: the home body must flatten to real interactive controls — the
+    # compliance bar, the quick-log buttons and the calendar grid — not an
+    # empty placeholder.
+    page = _fake_page(ROUTE_HOME)
+    view = build_view(
+        page,
+        ROUTE_HOME,
+        _app_state(),
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+    )
+
+    flat = _flatten(view)
+    assert any(isinstance(c, ft.ProgressBar) for c in flat), (
+        "expected the compliance bar (ProgressBar) on the home screen"
+    )
+    assert any(isinstance(c, ft.Button) for c in flat), (
+        "expected at least one quick-log Button on the home screen"
+    )
+    assert any(isinstance(c, ft.GridView) for c in flat), (
+        "expected the calendar grid (GridView) on the home screen"
+    )
+
+
+def test_build_view_body_non_empty_for_every_route():
+    # Every known route must render a non-empty body so no route can show a
+    # blank screen.
+    for route in KNOWN_ROUTES:
+        page = _fake_page(route)
+        view = build_view(
+            page,
+            route,
+            _app_state(),
+            APIClient("http://127.0.0.1:8080"),
+            _fake_storage(),
+        )
+        assert view.controls, f"route {route} produced an empty view"
+        assert view.controls[0] is not None
+
+
+def test_initial_render_appends_exactly_one_view_and_updates():
+    # The core blank-window regression guard: invoking the direct initial-render
+    # path with route="/" must leave exactly one ft.View in page.views and must
+    # call page.update(). Under the old navigate()-based startup, page.views
+    # stayed empty and this assertion would fail.
+    page = _fake_page(ROUTE_HOME)
+
+    initial_render(
+        page,
+        _app_state(),
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+    )
+
+    assert len(page.views) == 1
+    assert isinstance(page.views[0], ft.View)
+    assert page.views[0].route == ROUTE_HOME
+    page.update.assert_called_once()
+
+
+def test_initial_render_renders_route_argument_when_given():
+    # When an explicit route is passed it takes precedence over page.route,
+    # mirroring how _render forwards the route-change event's route.
+    page = _fake_page(ROUTE_HOME)
+
+    initial_render(
+        page,
+        _app_state(),
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+        route=ROUTE_SUMMARY,
+    )
+
+    assert len(page.views) == 1
+    assert page.views[0].route == ROUTE_SUMMARY
+
+
+def test_initial_render_clears_previous_views_before_appending():
+    # Re-rendering must not accumulate stale views; the fix clears page.views
+    # first, so a repaint always yields exactly one current view.
+    page = _fake_page(ROUTE_HOME)
+    page.views = [ft.View(route="/stale", controls=[ft.Text("stale")])]
+
+    initial_render(
+        page,
+        _app_state(),
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+    )
+
+    assert len(page.views) == 1
+    assert page.views[0].route == ROUTE_HOME
+
+
+def test_initial_render_home_view_is_non_blank():
+    # End-to-end render guard: after the direct initial render the single view's
+    # body flattens to real interactive controls, proving the home screen is not
+    # blank (compliance bar + log buttons + month nav + calendar grid).
+    page = _fake_page(ROUTE_HOME)
+
+    initial_render(
+        page,
+        _app_state(),
+        APIClient("http://127.0.0.1:8080"),
+        _fake_storage(),
+    )
+
+    flat = _flatten(page.views[0])
+    assert any(isinstance(c, ft.ProgressBar) for c in flat)
+    assert any(isinstance(c, ft.Button) for c in flat)
+    assert any(isinstance(c, ft.IconButton) for c in flat)
+    assert any(isinstance(c, ft.GridView) for c in flat)

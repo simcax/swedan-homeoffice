@@ -1,0 +1,33 @@
+# Local development database for the Work Location Tracker backend.
+#
+# This is a convenience service for running the stack on your machine. It is
+# NOT used in production — Clever Cloud provides its own managed PostgreSQL
+# add-on and injects DATABASE_URL automatically.
+#
+#   docker compose up -d db     # start Postgres in the background
+#   docker compose down         # stop it (data is kept in the named volume)
+#   docker compose down -v      # stop it and wipe all data
+#
+# Credentials here are deliberately trivial local-only defaults. Never reuse
+# them anywhere real.
+
+services:
+  db:
+    image: postgres:16
+    container_name: wlt-postgres
+    environment:
+      POSTGRES_USER: wlt
+      POSTGRES_PASSWORD: wlt
+      POSTGRES_DB: wlt
+    ports:
+      - "5432:5432"
+    volumes:
+      - wlt-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wlt -d wlt"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  wlt-pgdata:

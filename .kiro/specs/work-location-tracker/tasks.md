@@ -211,7 +211,8 @@ Implement a Python monorepo with two packages — `backend/` (FastAPI + async SQ
     - _Requirements: 6.1, 6.2, 6.3, 7.1, 7.2, 7.5, 7.6_
 
   - [x] 7.5 Implement FastAPI app factory in `backend/main.py`
-    - Create `FastAPI` app with lifespan that checks `DATABASE_URL` and runs Alembic `upgrade head` before accepting requests
+    - Create `FastAPI` app with a lifespan that validates `DATABASE_URL` before accepting requests (fails fast when missing)
+    - Run Alembic `upgrade head` as a dedicated pre-start step (`backend.migrate` via `CC_POST_BUILD_HOOK` / `scripts/dev.sh`), not in the lifespan, so it cannot race across multiple uvicorn workers or `--reload`
     - Register entries and summary routers; add CORS middleware
     - Bind to `0.0.0.0:8080` when started via `CC_PYTHON_UV_RUN_COMMAND`
     - _Requirements: 11.2, 11.3, 11.4, 11.5_

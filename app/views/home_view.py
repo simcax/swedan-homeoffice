@@ -56,6 +56,7 @@ import httpx
 from app.api_client import APIClient, APIError, WorkEntry, WorkLocation
 from app.components.calendar_grid import build_calendar_grid
 from app.components.compliance_bar import build_compliance_bar
+from app.concurrency import GuardKind, WriteGuard, backend_superseded
 from app.state import AppState
 
 # Button background colour per location (Requirements 8.2, 13.5, 14.5). These
@@ -232,29 +233,25 @@ def _record_error(state: AppState, classified: ClassifiedError) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _is_superseded(state: AppState, generation: int | None) -> bool:
-    """Return ``True`` when ``generation`` no longer matches the current backend.
+def _backend_guard(state: AppState, generation: int | None) -> WriteGuard:
+    """Capture a backend-only :class:`WriteGuard` for a mutation coroutine.
 
-    Load and mutation coroutines capture ``state.backend_generation`` when they
-    start and pass it here as ``generation`` immediately before committing
-    results. When a backend switch bumped ``state.backend_generation`` while the
-    network request was in flight, the captured value no longer matches and the
-    write must be skipped so results fetched from the old backend never land in
-    state (closing the temporal race in :func:`app.main.reset_for_new_backend`).
-
-    When ``generation`` is ``None`` the guard is disabled and this always
-    returns ``False``, so existing call sites that do not opt in keep their
-    previous behaviour.
+    The log / delete / edit coroutines own no per-request counter; they only
+    need to detect a backend switch that happened while their request was in
+    flight. This is a thin wrapper over
+    :meth:`WriteGuard.capture` with ``kind=GuardKind.BACKEND_ONLY`` so each
+    coroutine reads uniformly. When ``generation`` is ``None`` the guard's
+    backend check is disabled, reproducing the previous legacy behaviour.
 
     Args:
         state: The shared in-memory :class:`AppState`.
-        generation: The backend generation captured at the start of the request,
-            or ``None`` to disable the guard.
+        generation: The backend generation captured at request start, or
+            ``None`` to disable the guard.
 
     Returns:
-        ``True`` when the write should be skipped, ``False`` otherwise.
+        A backend-only :class:`WriteGuard`.
     """
-    return generation is not None and state.backend_generation != generation
+    return WriteGuard.capture(state, kind=GuardKind.BACKEND_ONLY, generation=generation)
 
 
 async def _refresh_annual(
@@ -271,10 +268,11 @@ async def _refresh_annual(
     swallowed and the previous value is kept, mirroring the monthly summary
     refresh, so a failed annual refresh never fails the triggering operation.
 
-    The write is guarded by :func:`_is_superseded`: when ``generation`` is given
-    and no longer matches ``state.backend_generation``, or when the selected
-    year changes or a newer annual refresh starts while the request is in
-    flight, the result is discarded.
+    The write is guarded by a :class:`WriteGuard` of
+    :class:`~app.concurrency.GuardKind.ANNUAL`: it captures (and bumps) the
+    annual-summary request counter and the selected year up front, then
+    discards the result if the backend changed, a newer annual refresh started,
+    or the selected year changed while the request was in flight.
     A local helper (rather than importing :func:`app.main.load_annual_summary`)
     keeps ``home_view`` free of a ``home_view → main`` import cycle.
 
@@ -283,22 +281,16 @@ async def _refresh_annual(
         api_client: The backend :class:`APIClient` to fetch from.
         generation: Optional backend generation guarding the write.
     """
-    if _is_superseded(state, generation):
+    if backend_superseded(state, generation):
         return
 
-    year = state.selected_month.year
-    state.annual_summary_generation += 1
-    request_generation = state.annual_summary_generation
+    guard = WriteGuard.capture(state, kind=GuardKind.ANNUAL, generation=generation)
     try:
-        annual = await api_client.get_annual_summary(year)
+        annual = await api_client.get_annual_summary(guard.year)
     except APIError:
         return
 
-    if (
-        _is_superseded(state, generation)
-        or state.selected_month.year != year
-        or state.annual_summary_generation != request_generation
-    ):
+    if guard.is_stale(state):
         return
 
     state.annual_summary = annual
@@ -332,6 +324,7 @@ async def log_entry(
     """
     target = work_date or date.today()  # noqa: DTZ011
     iso_date = target.isoformat()
+    guard = _backend_guard(state, generation)
 
     try:
         entry = await api_client.post_entry(iso_date, location)
@@ -342,13 +335,13 @@ async def log_entry(
         # other 422 fall back to the generic validation message.
         is_future = target > date.today()  # noqa: DTZ011
         context = iso_date if is_future else None
-        if _is_superseded(state, generation):
+        if guard.is_stale(state):
             return False
         _record_error(state, classify_error(exc, context=context))
         return False
 
     # Guard the write: a backend switch during the request invalidates results.
-    if _is_superseded(state, generation):
+    if guard.is_stale(state):
         return False
 
     # Success: apply the entry and refresh the compliance indicator.
@@ -365,7 +358,7 @@ async def log_entry(
         # and surface a non-destructive notice.
         state.error_message = "Entry saved, but the compliance summary is stale."
     else:
-        if not _is_superseded(state, generation):
+        if not guard.is_stale(state):
             state.compliance_summary = summary
 
     await _refresh_annual(state, api_client, generation=generation)
@@ -396,16 +389,17 @@ async def delete_entry(
     means the backend changed mid-request, so the write is skipped and the
     method returns ``False`` (Fix A). ``generation=None`` disables the guard.
     """
+    guard = _backend_guard(state, generation)
     try:
         await api_client.delete_entry(entry.id)
     except APIError as exc:
-        if _is_superseded(state, generation):
+        if guard.is_stale(state):
             return False
         _record_error(state, classify_error(exc))
         return False
 
     # Guard the write: a backend switch during the request invalidates results.
-    if _is_superseded(state, generation):
+    if guard.is_stale(state):
         return False
 
     # Success: clear the tile and refresh the compliance indicator.
@@ -420,7 +414,7 @@ async def delete_entry(
     except APIError:
         state.error_message = "Entry deleted, but the compliance summary is stale."
     else:
-        if not _is_superseded(state, generation):
+        if not guard.is_stale(state):
             state.compliance_summary = summary
 
     await _refresh_annual(state, api_client, generation=generation)
@@ -453,16 +447,17 @@ async def edit_entry(
     means the backend changed mid-request, so the write is skipped and the
     method returns ``False`` (Fix A). ``generation=None`` disables the guard.
     """
+    guard = _backend_guard(state, generation)
     try:
         updated = await api_client.patch_entry(entry.id, location)
     except APIError as exc:
-        if _is_superseded(state, generation):
+        if guard.is_stale(state):
             return False
         _record_error(state, classify_error(exc))
         return False
 
     # Guard the write: a backend switch during the request invalidates results.
-    if _is_superseded(state, generation):
+    if guard.is_stale(state):
         return False
 
     # Success: apply the updated entry and refresh the compliance indicator.
@@ -477,7 +472,7 @@ async def edit_entry(
     except APIError:
         state.error_message = "Entry updated, but the compliance summary is stale."
     else:
-        if not _is_superseded(state, generation):
+        if not guard.is_stale(state):
             state.compliance_summary = summary
 
     await _refresh_annual(state, api_client, generation=generation)
@@ -515,24 +510,27 @@ async def load_month(
     request token, so a superseded load is discarded even if navigation later
     returns to the same month.
     """
-    state.month_load_generation += 1
-    request_generation = state.month_load_generation
+    guard = WriteGuard.capture(state, kind=GuardKind.MONTH, generation=generation)
+
+    def _superseded() -> bool:
+        # The guard covers the backend switch and the month-load request
+        # counter; ``expected_month`` is an independent caller-supplied
+        # requirement that the selected month has not changed in flight.
+        return guard.is_stale(state) or (
+            expected_month is not None and state.selected_month != expected_month
+        )
 
     try:
         entries = await api_client.get_entries(year, month)
         summary = await api_client.get_summary(year, month)
     except APIError as exc:
-        if _is_superseded(state, generation) or (
-            expected_month is not None and state.selected_month != expected_month
-        ) or state.month_load_generation != request_generation:
+        if _superseded():
             return False
         _record_error(state, classify_error(exc))
         return False
 
     # Guard the write: a backend switch during the request invalidates results.
-    if _is_superseded(state, generation) or (
-        expected_month is not None and state.selected_month != expected_month
-    ) or state.month_load_generation != request_generation:
+    if _superseded():
         return False
 
     year_changed = year != state.selected_month.year
@@ -787,13 +785,13 @@ def _dispatch_error_surface(
     """
     action = state.error_action
     message = state.error_message or "Something went wrong. Please try again."
-    request_generation = (
-        state.backend_generation if generation is None else generation
-    )
+    request_generation = state.backend_generation if generation is None else generation
 
     if action is ErrorAction.SNACKBAR_REFRESH:
         _show_snack(page, message, color=ft.Colors.RED_700)
         expected_month = state.selected_month
+
+        reload_guard = _backend_guard(state, request_generation)
 
         async def _reload() -> None:
             await load_month(
@@ -805,7 +803,7 @@ def _dispatch_error_surface(
                 expected_month=expected_month,
             )
             if (
-                not _is_superseded(state, request_generation)
+                not reload_guard.is_stale(state)
                 and state.selected_month == expected_month
             ):
                 refresh()
