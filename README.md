@@ -121,36 +121,51 @@ Never commit them to the repository.
 
 ## Deployment (Clever Cloud)
 
-The backend runs on Clever Cloud with these environment variables:
+A **single** Clever Cloud app hosts both the API and the Flet web UI (one
+scaler, one PostgreSQL add-on). The backend serves the API under `/api/v1/...`
+and mounts the Flet web client at `/` when `SERVE_FRONTEND` is enabled.
+
+The app runs with these environment variables:
 
 | Variable | Value |
 |---|---|
 | `CC_PYTHON_UV_SYNC_FLAGS` | `--locked --no-progress` |
 | `CC_PYTHON_UV_RUN_COMMAND` | `.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8080` |
-| `CC_POST_BUILD_HOOK` | `uv run alembic -c backend/alembic.ini upgrade head` |
-| `DATABASE_URL` | injected automatically by the PostgreSQL add-on |
+| `CC_PRE_RUN_HOOK` | `uv run python -m backend.migrate` |
+| `SERVE_FRONTEND` | `true` (mount the Flet web UI at `/`) |
+| `API_BASE_URL` | the app's public URL (the co-hosted UI calls the same origin) |
+| `POSTGRESQL_ADDON_*` | injected automatically by the PostgreSQL add-on |
 
-The post-build hook runs from the repository root, so Alembic is pointed at the
-config explicitly with `-c backend/alembic.ini`. Keeping the root as the working
-directory ensures `alembic/env.py` can `import backend` while still locating the
-migration scripts under `backend/alembic`.
+### Database configuration (no `DATABASE_URL` indirection in production)
 
-### Migrations run once, before serving
+The backend resolves its connection string from `DATABASE_URL` when set
+(local/CI), otherwise directly from the `POSTGRESQL_ADDON_*` variables the
+PostgreSQL add-on injects at run time (`POSTGRESQL_ADDON_URI`, or the discrete
+`_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_DB` parts). Do **not** set a
+manual `DATABASE_URL="${POSTGRESQL_ADDON_URI}"` on Clever Cloud: that expansion
+is empty during the build phase (the add-on variables are not injected then),
+which previously broke the build-phase migration hook.
 
-`alembic upgrade head` runs **only** as this pre-start hook — it is **not** run
-from the FastAPI lifespan. Running it in the lifespan would race when more than
-one process starts at once (multiple uvicorn workers, or `--reload`'s reloader
-plus worker), each calling `upgrade head` against the same database
-concurrently. As a single pre-start step the schema is brought current exactly
-once before any instance serves.
+### Migrations run on the run instance, before serving
 
-The equivalent of the post-build hook, with `DATABASE_URL` validation and a
-non-zero exit on failure, is also available as a module entry point:
+Migrations run via `CC_PRE_RUN_HOOK` — a **run-phase** hook that executes on the
+run instance (where the add-on variables exist) just before the app starts.
+This replaces the old `CC_POST_BUILD_HOOK`, which ran during the **build**
+phase where `DATABASE_URL` / `POSTGRESQL_ADDON_*` are not available, causing
+`sqlalchemy.exc.ArgumentError: Could not parse SQLAlchemy URL from given URL
+string` (an empty connection string).
+
+`backend.migrate` validates the database configuration first and exits non-zero
+on failure, so a mis-configured or failed migration aborts the deploy before
+any instance serves on an out-of-date schema:
 
 ```bash
 uv run python -m backend.migrate
 ```
 
-The FastAPI app still validates `DATABASE_URL` on startup (and aborts if it is
-missing), so a mis-configured deployment still fails fast — it just no longer
-migrates from inside the request-serving processes.
+Migrations are **not** run from the FastAPI lifespan: running them there would
+race when more than one process starts at once (multiple uvicorn workers, or
+`--reload`'s reloader plus worker). As a single pre-run step the schema is
+brought current exactly once. The FastAPI app still validates the database
+configuration on startup (and aborts if it is missing), so a mis-configured
+deployment still fails fast.
