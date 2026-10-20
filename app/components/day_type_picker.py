@@ -14,10 +14,9 @@ live alongside this builder and are themselves runtime-free: they take an
 state in place, and never touch Flet, so they can be unit-tested with a mocked
 client.
 
-The dialog reuses the colour map and human-readable labels already used by the
-calendar tiles (``entry_tile._LOCATION_COLORS``) and the quick-log buttons
-(``home_view._BUTTON_LABELS`` / ``_BUTTON_COLORS``) so it reads in the same
-visual language as the rest of the home screen.
+The dialog reuses the colour map already used by the calendar tiles
+(``entry_tile._LOCATION_COLORS``) together with its own :data:`PICKER_LABELS`
+so it reads in the same visual language as the rest of the home screen.
 
 Requirements: 1.1, 1.2, 1.3, 1.5
 """
@@ -33,9 +32,7 @@ from app.api_client import APIClient, APIError, WorkEntry, WorkLocation
 from app.components.entry_tile import _LOCATION_COLORS
 from app.state import AppState
 
-# Human-readable labels for the four location choices. These mirror the
-# quick-log button labels in ``home_view`` so the picker reads in the same
-# language as the calendar's quick-log row (Requirement 1.2).
+# Human-readable labels for the four location choices (Requirement 1.2).
 PICKER_LABELS: dict[WorkLocation, str] = {
     WorkLocation.DENMARK: "Office / Denmark",
     WorkLocation.HOME: "Work from Home",
@@ -43,7 +40,7 @@ PICKER_LABELS: dict[WorkLocation, str] = {
     WorkLocation.SICK: "Sick Day",
 }
 
-# Order the four choices are rendered in, matching the quick-log button order.
+# Order the four choices are rendered in.
 _PICKER_ORDER: tuple[WorkLocation, ...] = (
     WorkLocation.DENMARK,
     WorkLocation.HOME,

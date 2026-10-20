@@ -54,42 +54,93 @@ import flet as ft
 import httpx
 
 from app.api_client import APIClient, APIError, WorkEntry, WorkLocation
-from app.components.calendar_grid import build_calendar_grid
-from app.components.compliance_bar import build_compliance_bar
+from app.components.calendar_grid import (
+    _COLUMNS,
+    _PADDING,
+    _SPACING,
+    build_calendar_grid,
+    build_weekday_header,
+    fit_cell_edge,
+    row_count,
+)
+from app.components.compliance_bar import build_compliance_indicator
 from app.components.day_type_picker import (
+    _PICKER_ORDER,
+    PICKER_LABELS,
     apply_day_type,
     build_day_type_picker,
     can_open_picker,
     clear_day_type,
 )
+from app.components.entry_tile import _LOCATION_COLORS
 from app.concurrency import GuardKind, WriteGuard, backend_superseded
 from app.state import AppState
 
-# Button background colour per location (Requirements 8.2, 13.5, 14.5). These
-# mirror the calendar tile colours so the quick-log buttons read as the same
-# "language" as the grid.
-_BUTTON_COLORS: dict[WorkLocation, str] = {
-    WorkLocation.DENMARK: ft.Colors.RED_700,
-    WorkLocation.HOME: ft.Colors.BLUE_700,
-    WorkLocation.VACATION: ft.Colors.ORANGE_700,
-    WorkLocation.SICK: ft.Colors.PURPLE_700,
-}
+# Horizontal padding (logical px) applied to the weekday-header holder so its
+# seven equal-expand columns align above the calendar grid. It mirrors the
+# grid's inner ``_PADDING`` in ``app.components.calendar_grid`` (Requirement
+# 5.2): the grid insets its tiles by that padding, so the header must be inset
+# by the same amount for the columns to line up.
+_GRID_PADDING = 8
 
-# Human-readable labels for the quick-log buttons.
-_BUTTON_LABELS: dict[WorkLocation, str] = {
-    WorkLocation.DENMARK: "Office / Denmark",
-    WorkLocation.HOME: "Work from Home",
-    WorkLocation.VACATION: "Vacation",
-    WorkLocation.SICK: "Sick Day",
-}
+# ---------------------------------------------------------------------------
+# responsive grid sizing (Requirement 4.1, 4.2, 5.2)
+# ---------------------------------------------------------------------------
 
-# Order the buttons are rendered in.
-_BUTTON_ORDER: tuple[WorkLocation, ...] = (
-    WorkLocation.DENMARK,
-    WorkLocation.HOME,
-    WorkLocation.VACATION,
-    WorkLocation.SICK,
-)
+# Fallback page dimensions used when ``page.width`` / ``page.height`` are not
+# yet reported by Flet (they are ``None`` before the first client measurement).
+_FALLBACK_PAGE_WIDTH = 400.0
+_FALLBACK_PAGE_HEIGHT = 600.0
+
+# Estimated vertical space (logical px) consumed by everything in the home
+# screen *other* than the calendar grid, so the grid is given a realistic
+# available height and all six possible rows fit between the weekday header and
+# the bottom navigation bar (Requirement 4.2). This is deliberately a generous
+# estimate — the key invariant is that six rows fit, not pixel-perfect fit:
+#
+#   * top AppBar + bottom NavigationBar chrome      ~ 180
+#   * circular compliance indicator + its spacing   ~ 160
+#   * month-navigation row                          ~  56
+#   * weekday header row                            ~  40
+#   * Column inter-control spacing (16 × 4 gaps)    ~  64
+#   * outer Container padding (16 top + 16 bottom)  ~  32
+#
+# The estimate is deliberately conservative (biased to reserve a little extra)
+# so the computed cell edge never makes six rows overflow the viewport and clip
+# the last week. As a belt-and-braces guarantee the grid is also made
+# scrollable (see ``build_calendar_grid``), so even if this estimate is off on
+# some platform the final row is always reachable.
+_VERTICAL_CHROME = 532.0
+
+
+def _available_grid_size(page: ft.Page) -> tuple[float, float]:
+    """Estimate the width/height (logical px) available to the calendar grid.
+
+    Reads ``page.width`` / ``page.height`` (Flet 1.0.2), falling back to
+    sensible defaults when either is ``None`` (before the first client
+    measurement). The height subtracts :data:`_VERTICAL_CHROME` — the space
+    taken by the app bar, navigation bar, compliance indicator, month-nav row,
+    weekday header, column spacing and container padding — so the grid gets a
+    realistic height in which all weeks must fit (Requirement 4.2). Both results
+    are floored at ``0.0``.
+    """
+    width = page.width if page.width is not None else _FALLBACK_PAGE_WIDTH
+    height = page.height if page.height is not None else _FALLBACK_PAGE_HEIGHT
+
+    avail_w = max(0.0, float(width))
+    avail_h = max(0.0, float(height) - _VERTICAL_CHROME)
+    return avail_w, avail_h
+
+
+def _grid_total_width(edge: float) -> float:
+    """Total horizontal extent of a grid whose cells are ``edge`` squares.
+
+    Seven columns, six inter-column gutters (``_SPACING``) and the two outer
+    paddings (``_PADDING``). Used to size and centre both the weekday header and
+    the grid to the same width so labels stay above their columns when the grid
+    is height-constrained and narrower than the full window (Requirement 5.2).
+    """
+    return _COLUMNS * edge + (_COLUMNS - 1) * _SPACING + 2 * _PADDING
 
 
 # ---------------------------------------------------------------------------
@@ -584,10 +635,14 @@ def build_home_view(
             after asynchronous state changes.
 
     Returns:
-        An :class:`ft.Container` holding the compliance bar, quick-log buttons,
-        month navigation, and the calendar grid.
+        An :class:`ft.Container` holding the circular compliance indicator,
+        month navigation, and the calendar grid. Logging is performed solely
+        through the day-type picker opened by tapping a calendar cell.
     """
-    compliance_bar = build_compliance_bar(state.compliance_summary)
+    compliance_holder = ft.Container(
+        content=build_compliance_indicator(state.compliance_summary),
+        alignment=ft.Alignment.CENTER,
+    )
     error_text = ft.Text(
         state.error_message or "",
         color=ft.Colors.RED_700,
@@ -601,16 +656,29 @@ def build_home_view(
     def _on_day_tap(day: int) -> None:
         _handle_tap(page, state, api_client, day, _refresh)
 
-    calendar_holder = ft.Container(
-        content=_build_grid(state, _on_day_long_press, _on_day_tap)
+    # The weekday header and grid are sized to the same total width and centred.
+    # When the grid is height-constrained it is narrower than the window, so
+    # centring both keeps each weekday label above its column (Requirement 5.2)
+    # while every week fits the viewport height (Requirement 4.2).
+    header_content, grid_content = _build_calendar_section(
+        page, state, _on_day_long_press, _on_day_tap
     )
+    weekday_header = ft.Container(content=header_content, alignment=ft.Alignment.CENTER)
+    calendar_holder = ft.Container(
+        content=grid_content, alignment=ft.Alignment.TOP_CENTER, expand=True
+    )
+
+    def _rebuild_calendar() -> None:
+        """Recompute the cell edge and rebuild the header + grid together."""
+        header, grid = _build_calendar_section(
+            page, state, _on_day_long_press, _on_day_tap
+        )
+        weekday_header.content = header
+        calendar_holder.content = grid
 
     def _refresh() -> None:
         """Rebuild every stateful control from ``state`` and repaint."""
-        new_bar = build_compliance_bar(state.compliance_summary)
-        compliance_bar.value = new_bar.value
-        compliance_bar.color = new_bar.color
-        compliance_bar.tooltip = new_bar.tooltip
+        compliance_holder.content = build_compliance_indicator(state.compliance_summary)
 
         # The inline error text only carries INLINE (422) validation messages;
         # banners, toasts and notifications use their own surfaces so they do
@@ -623,11 +691,27 @@ def build_home_view(
         error_text.visible = inline
 
         month_label.value = _month_title(state.selected_month)
-        calendar_holder.content = _build_grid(state, _on_day_long_press, _on_day_tap)
+        # Recompute the edge each build so navigation gets a correctly sized
+        # grid for the newly selected month's row count (Requirement 4.2).
+        _rebuild_calendar()
         if on_state_change is None:
             page.update()
         else:
             on_state_change()
+
+    # Rebuild the grid (and header) with a recomputed edge whenever the window
+    # is resized, so all weeks keep fitting as the viewport changes
+    # (Requirement 4.2). Any pre-existing resize handler is preserved (chained)
+    # so this does not clobber unrelated behaviour.
+    _previous_on_resize = page.on_resize
+
+    def _on_resize(event: ft.ControlEvent) -> None:
+        if _previous_on_resize is not None:
+            _previous_on_resize(event)
+        _rebuild_calendar()
+        page.update()
+
+    page.on_resize = _on_resize
 
     def _surface_error(ok: bool, generation: int) -> None:
         """Show the right UI surface for the latest error after an operation.
@@ -643,17 +727,6 @@ def build_home_view(
             page, state, api_client, _refresh, generation=generation
         )
 
-    def _on_log_click(location: WorkLocation) -> None:
-        async def _task() -> None:
-            # Capture the backend era at task start so a mid-request backend
-            # switch invalidates this write (Fix A).
-            gen = state.backend_generation
-            ok = await log_entry(state, api_client, location, generation=gen)
-            _refresh()
-            _surface_error(ok, gen)
-
-        page.run_task(_task)
-
     def _on_navigate(delta: int) -> None:
         async def _task() -> None:
             gen = state.backend_generation
@@ -663,13 +736,6 @@ def build_home_view(
             _surface_error(ok, gen)
 
         page.run_task(_task)
-
-    log_buttons = ft.Row(
-        controls=[_log_button(loc, _on_log_click) for loc in _BUTTON_ORDER],
-        alignment=ft.MainAxisAlignment.CENTER,
-        spacing=10,
-        wrap=True,
-    )
 
     nav_row = ft.Row(
         controls=[
@@ -692,10 +758,10 @@ def build_home_view(
     return ft.Container(
         content=ft.Column(
             controls=[
-                compliance_bar,
+                compliance_holder,
                 error_text,
-                log_buttons,
                 nav_row,
+                weekday_header,
                 calendar_holder,
             ],
             spacing=16,
@@ -716,16 +782,36 @@ def _month_title(selected: date) -> str:
     return f"{calendar.month_name[selected.month]} {selected.year}"
 
 
+def _compute_cell_edge(page: ft.Page, state: AppState) -> float:
+    """Compute the square cell edge (logical px) for the selected month.
+
+    Combines the grid's available width/height (:func:`_available_grid_size`)
+    with the number of rows the selected month needs (:func:`row_count`) so the
+    largest edge that keeps cells square *and* fits every week in the viewport
+    is chosen (:func:`fit_cell_edge`). Recomputed on each build so both month
+    navigation and window resize get a correctly sized grid (Requirement 4.1,
+    4.2).
+    """
+    avail_w, avail_h = _available_grid_size(page)
+    rows = row_count(state.selected_month.year, state.selected_month.month)
+    return fit_cell_edge(avail_w, avail_h, rows)
+
+
 def _build_grid(
     state: AppState,
     on_day_long_press: Callable[[int], None] | None = None,
     on_day_tap: Callable[[int], None] | None = None,
+    *,
+    cell_edge: float | None = None,
 ) -> ft.GridView:
     """Build the calendar grid for the currently selected month.
 
     ``on_day_long_press`` is forwarded to :func:`build_calendar_grid` so each
     logged tile can open the edit/delete menu on long-press. ``on_day_tap`` is
     forwarded so any past-or-today tile can open the day-type picker on tap.
+    ``cell_edge`` pins every cell to an explicit square so all weeks fit the
+    viewport height without clipping (Requirement 4.2); ``None`` keeps the
+    expand-to-fill behaviour.
     """
     return build_calendar_grid(
         state.selected_month.year,
@@ -733,18 +819,46 @@ def _build_grid(
         state.entries,
         on_day_long_press,
         on_day_tap,
+        cell_edge=cell_edge,
     )
 
 
-def _log_button(location: WorkLocation, on_click) -> ft.Button:
-    """Build a single colour-coded quick-log button for ``location``."""
-    return ft.Button(
-        content=ft.Text(_BUTTON_LABELS[location]),
-        color=ft.Colors.WHITE,
-        bgcolor=_BUTTON_COLORS[location],
-        on_click=lambda _e, loc=location: on_click(loc),
-        data=location,
+def _build_calendar_section(
+    page: ft.Page,
+    state: AppState,
+    on_day_long_press: Callable[[int], None] | None,
+    on_day_tap: Callable[[int], None] | None,
+) -> tuple[ft.Control, ft.Control]:
+    """Build the weekday header and calendar grid, sized to the same width.
+
+    Computes the square cell edge for the selected month, then wraps both the
+    weekday header and the grid in centred containers of the grid's total width
+    (``7*edge + 6*_SPACING + 2*_PADDING``). When the grid is height-constrained
+    it is narrower than the full window, so centring both at the same width
+    keeps each weekday label above its column (Requirement 5.2) while all weeks
+    fit the viewport (Requirement 4.2).
+
+    Returns a ``(header_control, grid_control)`` pair ready to drop into the
+    home-view column.
+    """
+    edge = _compute_cell_edge(page, state)
+    total_width = _grid_total_width(edge)
+
+    grid = _build_grid(state, on_day_long_press, on_day_tap, cell_edge=edge)
+
+    header = ft.Container(
+        content=build_weekday_header(),
+        width=total_width,
+        padding=ft.Padding.symmetric(horizontal=_GRID_PADDING, vertical=0),
+        alignment=ft.Alignment.CENTER,
     )
+    grid_holder = ft.Container(
+        content=grid,
+        width=total_width,
+        alignment=ft.Alignment.TOP_CENTER,
+        expand=True,
+    )
+    return header, grid_holder
 
 
 # ---------------------------------------------------------------------------
@@ -1046,7 +1160,7 @@ def _open_edit_dialog(
         page.run_task(_task)
 
     options = ft.Column(
-        controls=[_picker_button(loc, _pick) for loc in _BUTTON_ORDER],
+        controls=[_picker_button(loc, _pick) for loc in _PICKER_ORDER],
         tight=True,
         spacing=8,
     )
@@ -1064,9 +1178,9 @@ def _open_edit_dialog(
 def _picker_button(location: WorkLocation, on_pick: Callable[[WorkLocation], None]):
     """Build a colour-coded picker button for the edit dialog."""
     return ft.Button(
-        content=ft.Text(_BUTTON_LABELS[location]),
+        content=ft.Text(PICKER_LABELS[location]),
         color=ft.Colors.WHITE,
-        bgcolor=_BUTTON_COLORS[location],
+        bgcolor=_LOCATION_COLORS[location],
         on_click=lambda _e, loc=location: on_pick(loc),
         data=location,
     )

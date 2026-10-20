@@ -216,7 +216,7 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
     storage = ft.SharedPreferences()
     client = MagicMock()
     client.base_url = DEFAULT_API_BASE_URL
-    client.post_entry = AsyncMock(return_value=_entry(10))
+    client.get_entries = AsyncMock(return_value=[_entry(10)])
     client.get_summary = AsyncMock(return_value=_summary())
     client.get_annual_summary = AsyncMock(return_value=_annual())
 
@@ -235,11 +235,13 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
     page.on_route_change(MagicMock(route=ROUTE_HOME))
     home_view = page.views.append.call_args.args[0]
 
-    buttons: list[ft.Button] = []
+    # The quick-log buttons were removed (Requirement 3.1); month navigation is
+    # now the home operation that schedules a repaint through ``run_task``.
+    icon_buttons: list[ft.IconButton] = []
 
     def _walk(control: object) -> None:
-        if isinstance(control, ft.Button):
-            buttons.append(control)
+        if isinstance(control, ft.IconButton):
+            icon_buttons.append(control)
         content = getattr(control, "content", None)
         if content is not None:
             _walk(content)
@@ -248,7 +250,7 @@ async def test_pending_home_update_rebuilds_the_active_summary_route(monkeypatch
 
     for control in home_view.controls:
         _walk(control)
-    next(button for button in buttons if button.data is WorkLocation.DENMARK).on_click(
+    next(button for button in icon_buttons if button.tooltip == "Next month").on_click(
         MagicMock()
     )
     # The click schedules the home operation through the wrapped ``run_task``,
@@ -894,8 +896,10 @@ def test_build_view_home_body_is_non_empty():
 
 def test_build_view_home_body_contains_interactive_controls():
     # Guard 2: the home body must flatten to real interactive controls — the
-    # compliance bar, the quick-log buttons and the calendar grid — not an
-    # empty placeholder.
+    # circular compliance indicator, the month-navigation controls and the
+    # calendar grid — not an empty placeholder. The quick-log buttons were
+    # removed (Requirement 3.1), so the day-type picker (opened by tapping a
+    # cell) is the only logging path.
     page = _fake_page(ROUTE_HOME)
     view = build_view(
         page,
@@ -906,14 +910,17 @@ def test_build_view_home_body_contains_interactive_controls():
     )
 
     flat = _flatten(view)
-    assert any(isinstance(c, ft.ProgressBar) for c in flat), (
-        "expected the compliance bar (ProgressBar) on the home screen"
+    assert any(isinstance(c, ft.ProgressRing) for c in flat), (
+        "expected the circular compliance indicator (ProgressRing) on home"
     )
-    assert any(isinstance(c, ft.Button) for c in flat), (
-        "expected at least one quick-log Button on the home screen"
+    assert any(isinstance(c, ft.IconButton) for c in flat), (
+        "expected month-navigation IconButtons on the home screen"
     )
     assert any(isinstance(c, ft.GridView) for c in flat), (
         "expected the calendar grid (GridView) on the home screen"
+    )
+    assert not any(isinstance(c, ft.FloatingActionButton) for c in flat), (
+        "expected no logging FAB on the home screen (Requirement 3.2)"
     )
 
 
@@ -990,7 +997,8 @@ def test_initial_render_clears_previous_views_before_appending():
 def test_initial_render_home_view_is_non_blank():
     # End-to-end render guard: after the direct initial render the single view's
     # body flattens to real interactive controls, proving the home screen is not
-    # blank (compliance bar + log buttons + month nav + calendar grid).
+    # blank (circular compliance indicator + month nav + calendar grid). The
+    # quick-log buttons were removed (Requirement 3.1).
     page = _fake_page(ROUTE_HOME)
 
     initial_render(
@@ -1001,7 +1009,6 @@ def test_initial_render_home_view_is_non_blank():
     )
 
     flat = _flatten(page.views[0])
-    assert any(isinstance(c, ft.ProgressBar) for c in flat)
-    assert any(isinstance(c, ft.Button) for c in flat)
+    assert any(isinstance(c, ft.ProgressRing) for c in flat)
     assert any(isinstance(c, ft.IconButton) for c in flat)
     assert any(isinstance(c, ft.GridView) for c in flat)
