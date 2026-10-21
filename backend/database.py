@@ -116,6 +116,8 @@ def get_engine() -> AsyncEngine:
             resolve_database_url(),
             echo=False,
             pool_pre_ping=True,
+            pool_timeout=5,  # wait at most 5s for a pooled connection
+            connect_args={"timeout": 5},  # asyncpg connect timeout (seconds)
         )
     return _engine
 
