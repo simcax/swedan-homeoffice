@@ -16,7 +16,15 @@ from datetime import date
 import flet as ft
 
 from app.api_client import WorkEntry, WorkLocation
-from app.components.calendar_grid import BLANK_CELL, build_calendar_grid
+from app.components.calendar_grid import (
+    _COLUMNS,
+    _PADDING,
+    _SPACING,
+    BLANK_CELL,
+    build_calendar_grid,
+    fit_cell_edge,
+    row_count,
+)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -203,3 +211,79 @@ class TestLongPress:
         tile.on_long_press(None)
 
         assert received == [15]
+
+
+# ---------------------------------------------------------------------------
+# Height-aware square sizing (Requirements 4.1, 4.2)
+# ---------------------------------------------------------------------------
+
+
+class TestFitCellEdge:
+    def test_returns_min_of_width_and_height_constrained_edges(self) -> None:
+        # Wide but short viewport → height is the binding constraint.
+        wide_short = fit_cell_edge(10_000.0, 600.0, 6)
+        # The height-based edge for 6 rows must bound the result, not width.
+        height_edge = (600.0 - 2 * _PADDING - (6 - 1) * _SPACING) / 6
+        assert wide_short == height_edge
+
+        # Tall but narrow viewport → width is the binding constraint.
+        narrow_tall = fit_cell_edge(400.0, 10_000.0, 6)
+        width_edge = (400.0 - 2 * _PADDING - (_COLUMNS - 1) * _SPACING) / _COLUMNS
+        assert narrow_tall == width_edge
+
+    def test_edge_is_floored_at_zero(self) -> None:
+        # Available dimensions smaller than the padding/gutters must not yield a
+        # negative edge.
+        assert fit_cell_edge(1.0, 1.0, 6) == 0.0
+        assert fit_cell_edge(10.0, 1.0, 6) == 0.0
+
+    def test_non_positive_row_count_yields_zero(self) -> None:
+        assert fit_cell_edge(1000.0, 1000.0, 0) == 0.0
+        assert fit_cell_edge(1000.0, 1000.0, -3) == 0.0
+
+    def test_result_fits_both_width_and_height(self) -> None:
+        # For a range of representative viewports and row counts, the chosen
+        # edge must satisfy both the width and height constraints exactly.
+        viewports = [
+            (400.0, 600.0),
+            (1920.0, 1080.0),
+            (800.0, 400.0),
+            (1200.0, 2000.0),
+            (375.0, 812.0),
+        ]
+        for avail_w, avail_h in viewports:
+            for rows in range(1, 7):
+                edge = fit_cell_edge(avail_w, avail_h, rows)
+                width_used = _COLUMNS * edge + (_COLUMNS - 1) * _SPACING + 2 * _PADDING
+                height_used = rows * edge + (rows - 1) * _SPACING + 2 * _PADDING
+                # Allow a hair of floating-point slack.
+                assert width_used <= avail_w + 1e-9
+                assert height_used <= avail_h + 1e-9
+
+
+class TestRowCount:
+    def test_28_day_february_starting_monday_is_four_rows(self) -> None:
+        # February 2021: 28 days, 1 Feb 2021 is a Monday → no leading blanks →
+        # exactly 4 rows.
+        assert calendar.monthrange(2021, 2)[0] == 0
+        assert calendar.monthrange(2021, 2)[1] == 28
+        assert row_count(2021, 2) == 4
+
+    def test_31_day_month_starting_saturday_needs_six_rows(self) -> None:
+        # May 2021: 31 days, 1 May 2021 is a Saturday (Monday-indexed 5) →
+        # 5 blanks + 31 days = 36 cells → 6 rows.
+        assert calendar.monthrange(2021, 5)[0] == 5
+        assert calendar.monthrange(2021, 5)[1] == 31
+        assert row_count(2021, 5) == 6
+
+    def test_31_day_month_starting_sunday_needs_six_rows(self) -> None:
+        # August 2021: 31 days, 1 Aug 2021 is a Sunday (Monday-indexed 6) →
+        # 6 blanks + 31 days = 37 cells → 6 rows.
+        assert calendar.monthrange(2021, 8)[0] == 6
+        assert row_count(2021, 8) == 6
+
+    def test_matches_grid_cell_count_for_every_month(self) -> None:
+        for month in range(1, 13):
+            first_weekday, days = calendar.monthrange(2025, month)
+            expected = -(-(first_weekday + days) // _COLUMNS)
+            assert row_count(2025, month) == expected

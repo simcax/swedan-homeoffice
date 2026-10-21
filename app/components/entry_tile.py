@@ -46,25 +46,33 @@ def tile_color(entry: WorkEntry | None) -> str:
     return _LOCATION_COLORS[entry.location]
 
 
-def build_entry_tile(day: int, entry: WorkEntry | None) -> ft.Container:
+def build_entry_tile(
+    day: int, entry: WorkEntry | None, edge: float | None = None
+) -> ft.Container:
     """Build a color-coded calendar tile for a single day.
 
     Args:
         day: The day-of-month number shown on the tile (1–31).
         entry: The logged :class:`WorkEntry` for that day, or ``None`` when the
             day has not been logged yet.
+        edge: Optional square edge length (in logical pixels) for the tile. When
+            provided, the tile is pinned to an ``edge`` × ``edge`` square. When
+            ``None`` (the default), the tile fills its grid cell via
+            ``expand=True`` so the grid's ``child_aspect_ratio=1.0`` governs its
+            square size (Requirement 4.1).
 
     Returns:
         An :class:`ft.Container` displaying the day number, with a background
         colour determined by the entry's location (or the surface colour when
-        unlogged).
+        unlogged). The tile is centred and carries no fixed padding so it never
+        fights the grid's 1:1 square ratio.
     """
     bgcolor = tile_color(entry)
     # Unlogged days use theme-aware on-surface text; logged (coloured) days
     # use white for legible contrast against the saturated backgrounds.
     text_color = ft.Colors.ON_SURFACE if entry is None else ft.Colors.WHITE
 
-    return ft.Container(
+    tile = ft.Container(
         content=ft.Text(
             str(day),
             color=text_color,
@@ -74,6 +82,15 @@ def build_entry_tile(day: int, entry: WorkEntry | None) -> ft.Container:
         bgcolor=bgcolor,
         alignment=ft.Alignment.CENTER,
         border_radius=8,
-        padding=8,
         data=day,
     )
+
+    if edge is None:
+        # Fill the grid cell; the grid's 1:1 aspect ratio keeps it square.
+        tile.expand = True
+    else:
+        # Pin the tile to an explicit square when a caller supplies an edge.
+        tile.width = edge
+        tile.height = edge
+
+    return tile

@@ -28,7 +28,6 @@ from app.api_client import (
 )
 from app.state import AppState
 from app.views.home_view import (
-    _BUTTON_COLORS,
     _handle_long_press,
     _shift_month,
     build_home_view,
@@ -316,57 +315,66 @@ class TestBuildHomeView:
         view = build_home_view(MagicMock(spec=ft.Page), _state(), MagicMock())
         assert isinstance(view, ft.Container)
 
-    def test_has_four_log_buttons(self) -> None:
+    def test_has_no_quick_log_buttons(self) -> None:
+        # Requirement 3.1: the home view renders without the quick-log buttons.
         view = build_home_view(MagicMock(spec=ft.Page), _state(), MagicMock())
-        assert len(self._buttons(view)) == 4
+        assert self._buttons(view) == []
 
-    def test_each_button_has_correct_bgcolor(self) -> None:
+    def test_has_no_logging_fab(self) -> None:
+        # Requirement 3.2: no floating action button replaces the quick-log row.
         view = build_home_view(MagicMock(spec=ft.Page), _state(), MagicMock())
-        by_location = {b.data: b for b in self._buttons(view)}
+        assert not any(
+            isinstance(c, ft.FloatingActionButton) for c in self._flatten(view)
+        )
 
-        assert by_location[WorkLocation.DENMARK].bgcolor == ft.Colors.RED_700
-        assert by_location[WorkLocation.HOME].bgcolor == ft.Colors.BLUE_700
-        assert by_location[WorkLocation.VACATION].bgcolor == ft.Colors.ORANGE_700
-        assert by_location[WorkLocation.SICK].bgcolor == ft.Colors.PURPLE_700
-
-    def test_button_colors_mapping_matches_requirement(self) -> None:
-        assert _BUTTON_COLORS == {
-            WorkLocation.DENMARK: ft.Colors.RED_700,
-            WorkLocation.HOME: ft.Colors.BLUE_700,
-            WorkLocation.VACATION: ft.Colors.ORANGE_700,
-            WorkLocation.SICK: ft.Colors.PURPLE_700,
-        }
-
-    def test_contains_a_compliance_bar(self) -> None:
+    def test_contains_a_circular_compliance_indicator(self) -> None:
+        # Requirement 1.1: the compliance indicator is a circular ProgressRing.
         state = _state()
         state.compliance_summary = _summary()
         view = build_home_view(MagicMock(spec=ft.Page), state, MagicMock())
-        assert any(isinstance(c, ft.ProgressBar) for c in self._flatten(view))
+        assert any(isinstance(c, ft.ProgressRing) for c in self._flatten(view))
+
+    def test_compliance_indicator_neutral_when_no_summary(self) -> None:
+        # Requirement 1.4: a neutral empty ring is rendered without a summary.
+        state = _state()
+        state.compliance_summary = None
+        view = build_home_view(MagicMock(spec=ft.Page), state, MagicMock())
+        rings = [c for c in self._flatten(view) if isinstance(c, ft.ProgressRing)]
+        assert len(rings) == 1
+        assert rings[0].value == 0
 
     def test_contains_a_calendar_grid(self) -> None:
         view = build_home_view(MagicMock(spec=ft.Page), _state(), MagicMock())
         assert any(isinstance(c, ft.GridView) for c in self._flatten(view))
 
+    def _icon_buttons(self, view: ft.Container) -> list[ft.IconButton]:
+        return [c for c in self._flatten(view) if isinstance(c, ft.IconButton)]
+
     async def test_state_change_callback_runs_after_home_operation(self) -> None:
+        # The quick-log buttons are gone (Requirement 3.1); month navigation is
+        # now the stateful home operation that drives the on_state_change
+        # callback. Navigating forward loads the next month and repaints.
         page = MagicMock(spec=ft.Page)
-        state = _state()
+        state = _state(month=6)
         changed = MagicMock()
         client = MagicMock()
-        client.post_entry = AsyncMock(return_value=_entry(10, WorkLocation.DENMARK))
+        client.get_entries = AsyncMock(
+            return_value=[_entry(10, WorkLocation.DENMARK, month=7)]
+        )
         client.get_summary = AsyncMock(return_value=_summary())
         client.get_annual_summary = AsyncMock(return_value=_annual())
 
         view = build_home_view(page, state, client, on_state_change=changed)
-        log_button = next(
+        next_button = next(
             button
-            for button in self._buttons(view)
-            if button.data is WorkLocation.DENMARK
+            for button in self._icon_buttons(view)
+            if button.tooltip == "Next month"
         )
-        log_button.on_click(MagicMock())
+        next_button.on_click(MagicMock())
         await page.run_task.call_args.args[0]()
 
         changed.assert_called_once()
-        assert state.entries["2025-06-10"].location is WorkLocation.DENMARK
+        assert state.selected_month == date(2025, 7, 1)
 
 
 # ---------------------------------------------------------------------------
