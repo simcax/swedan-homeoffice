@@ -43,7 +43,7 @@ from starlette.status import HTTP_503_SERVICE_UNAVAILABLE
 from backend.auth import verify_api_key
 from backend.config import SharedSecretConfigurationError, get_settings
 from backend.database import DatabaseUnavailableError, get_engine
-from backend.routers import entries, summary
+from backend.routers import checkin, entries, summary
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +149,7 @@ def create_app(validate_config: bool | None = None) -> FastAPI:
     # pre-flight ``OPTIONS`` and any mounted Flet frontend unaffected.
     app.include_router(entries.router, dependencies=[Depends(verify_api_key)])
     app.include_router(summary.router, dependencies=[Depends(verify_api_key)])
+    app.include_router(checkin.router, dependencies=[Depends(verify_api_key)])
 
     # Optionally serve the Flet web UI from this same instance so a single
     # Clever Cloud app (and one PostgreSQL add-on) hosts both the API and the

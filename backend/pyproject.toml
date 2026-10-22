@@ -16,6 +16,7 @@ dependencies = [
     # does not install it, so production `uv sync --no-dev` would otherwise fail
     # at import with `ModuleNotFoundError: No module named 'flet_web'`.
     "flet[web]>=1.0.0",
+    "tzdata>=2026.5",
 ]
 
 [dependency-groups]
