@@ -80,6 +80,16 @@ async def client(async_session: AsyncSession) -> AsyncGenerator[AsyncClient, Non
 
 
 class TestCreateEntry:
+    async def test_accepts_work_travel_location(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.post(
+            API, json={"work_date": "2025-06-10", "location": "travel"}
+        )
+
+        assert response.status_code == 201
+        assert response.json()["location"] == "travel"
+
     async def test_valid_body_returns_201_and_correct_json(
         self, client: AsyncClient
     ) -> None:

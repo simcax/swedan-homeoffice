@@ -4,6 +4,7 @@ Each tile represents a single calendar day. Its background colour encodes the
 logged work location, so a user can read a whole month's pattern at a glance:
 
 * ``denmark``  → red    (office day in Denmark)
+* ``travel``   → teal   (work travel)
 * ``home``     → blue   (worked from home in Sweden)
 * ``vacation`` → orange
 * ``sick``     → purple
@@ -25,6 +26,7 @@ from app.api_client import WorkEntry, WorkLocation
 # Background colour per logged location (Requirements 8.2, 13.5, 14.5).
 _LOCATION_COLORS: dict[WorkLocation, str] = {
     WorkLocation.DENMARK: ft.Colors.RED_700,
+    WorkLocation.TRAVEL: ft.Colors.TEAL_700,
     WorkLocation.HOME: ft.Colors.BLUE_700,
     WorkLocation.VACATION: ft.Colors.ORANGE_700,
     WorkLocation.SICK: ft.Colors.PURPLE_700,

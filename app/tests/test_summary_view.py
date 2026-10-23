@@ -34,6 +34,7 @@ def _monthly(
     month: int = 6,
     total: int = 10,
     denmark: int = 5,
+    travel: int = 0,
     vacation: int = 1,
     sick: int = 1,
     home: int = 3,
@@ -45,6 +46,7 @@ def _monthly(
         month=month,
         total_days=total,
         denmark_days=denmark,
+        travel_days=travel,
         vacation_days=vacation,
         sick_days=sick,
         home_days=home,
@@ -73,6 +75,7 @@ def _annual(
         year=2025,
         total_days=total,
         denmark_days=total,
+        travel_days=0,
         vacation_days=0,
         sick_days=0,
         home_days=0,
@@ -115,17 +118,24 @@ class TestBuildMonthlyCard:
 
     def test_renders_all_count_fields(self) -> None:
         summary = _monthly(
-            total=20, denmark=12, vacation=3, sick=1, home=4, compliance_pct=80.0
+            total=20,
+            denmark=11,
+            travel=1,
+            vacation=3,
+            sick=1,
+            home=4,
+            compliance_pct=80.0,
         )
         card = build_monthly_card(summary)
         texts = _texts(card)
         joined = " ".join(texts)
 
         # Every labelled count appears, as does the compliance percentage.
-        for label in ("Total days", "Denmark", "Vacation", "Sick", "Home"):
+        for label in ("Total days", "Denmark", "Travel", "Vacation", "Sick", "Home"):
             assert label in joined
         assert "20" in texts  # total
-        assert "12" in texts  # denmark
+        assert "11" in texts  # denmark
+        assert texts.count("1") >= 2  # travel and sick
         assert "3" in texts  # vacation
         assert "4" in texts  # home
         assert any("80.0%" in t for t in texts)
@@ -171,7 +181,7 @@ class TestBuildAnnualTable:
     def test_has_a_column_per_header(self) -> None:
         control = build_annual_table(_annual())
         table = next(c for c in _flatten(control) if isinstance(c, ft.DataTable))
-        assert len(table.columns) == 7
+        assert len(table.columns) == 8
 
     def test_totals_row_reflects_annual_totals(self) -> None:
         annual = _annual()

@@ -3,8 +3,8 @@
 ``build_summary_view`` assembles a read-only screen that presents two things:
 
 * a **monthly summary card** rendering every field of a
-  :class:`app.api_client.ComplianceSummary` (total, denmark, vacation, sick,
-  home day counts and the compliance percentage), topped by the shared
+  :class:`app.api_client.ComplianceSummary` (total, denmark, travel, vacation,
+  sick, home day counts and the compliance percentage), topped by the shared
   compliance progress bar (Requirements 6.1, 8.1, 8.3, 8.4), and
 * an **annual summary** with a 12-row breakdown table (one row per month,
   January through December) plus a totals row (Requirement 7.1).
@@ -33,6 +33,7 @@ _ANNUAL_COLUMNS: tuple[str, ...] = (
     "Month",
     "Total",
     "Denmark",
+    "Travel",
     "Vacation",
     "Sick",
     "Home",
@@ -75,6 +76,7 @@ def build_monthly_card(summary: ComplianceSummary | None) -> ft.Card:
             ft.Text(f"Compliance: {summary.compliance_pct:.1f}%"),
             _stat_row("Total days", summary.total_days),
             _stat_row("Denmark", summary.denmark_days),
+            _stat_row("Travel", summary.travel_days),
             _stat_row("Vacation", summary.vacation_days),
             _stat_row("Sick", summary.sick_days),
             _stat_row("Home", summary.home_days),
@@ -190,6 +192,7 @@ def _month_row(summary: ComplianceSummary) -> ft.DataRow:
             ft.DataCell(ft.Text(calendar.month_name[summary.month])),
             ft.DataCell(ft.Text(str(summary.total_days))),
             ft.DataCell(ft.Text(str(summary.denmark_days))),
+            ft.DataCell(ft.Text(str(summary.travel_days))),
             ft.DataCell(ft.Text(str(summary.vacation_days))),
             ft.DataCell(ft.Text(str(summary.sick_days))),
             ft.DataCell(ft.Text(str(summary.home_days))),
@@ -205,6 +208,7 @@ def _totals_row(annual: AnnualSummary) -> ft.DataRow:
             ft.DataCell(ft.Text("Total", weight=ft.FontWeight.BOLD)),
             ft.DataCell(ft.Text(str(annual.total_days), weight=ft.FontWeight.BOLD)),
             ft.DataCell(ft.Text(str(annual.denmark_days), weight=ft.FontWeight.BOLD)),
+            ft.DataCell(ft.Text(str(annual.travel_days), weight=ft.FontWeight.BOLD)),
             ft.DataCell(ft.Text(str(annual.vacation_days), weight=ft.FontWeight.BOLD)),
             ft.DataCell(ft.Text(str(annual.sick_days), weight=ft.FontWeight.BOLD)),
             ft.DataCell(ft.Text(str(annual.home_days), weight=ft.FontWeight.BOLD)),

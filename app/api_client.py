@@ -38,6 +38,7 @@ BACKOFF_SECONDS = (1, 2, 4)
 class WorkLocation(str, Enum):
     HOME = "home"
     DENMARK = "denmark"
+    TRAVEL = "travel"
     VACATION = "vacation"
     SICK = "sick"
 
@@ -57,6 +58,7 @@ class ComplianceSummary(BaseModel):
     month: int
     total_days: int
     denmark_days: int
+    travel_days: int = 0
     vacation_days: int
     sick_days: int
     home_days: int
@@ -68,6 +70,7 @@ class AnnualSummary(BaseModel):
     year: int
     total_days: int
     denmark_days: int
+    travel_days: int = 0
     vacation_days: int
     sick_days: int
     home_days: int

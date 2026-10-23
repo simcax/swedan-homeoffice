@@ -76,7 +76,7 @@ def resolve_location(raw: str | None) -> WorkLocation:
 
     Returns the exactly-matching :class:`WorkLocation` when ``raw`` is a
     non-empty, case-sensitive exact match of one of the enum string values
-    (``home``, ``denmark``, ``vacation``, ``sick``). Returns the
+    (``home``, ``denmark``, ``travel``, ``vacation``, ``sick``). Returns the
     Default_Location (``denmark``) when ``raw`` is ``None`` or the empty
     string. Raises :class:`fastapi.HTTPException` with status 422 for any
     non-empty value that is not an exact match, so no Work_Entry is created

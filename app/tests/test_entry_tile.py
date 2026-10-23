@@ -47,6 +47,9 @@ class TestTileColor:
     def test_sick_maps_to_purple(self) -> None:
         assert tile_color(_entry(WorkLocation.SICK)) == ft.Colors.PURPLE_700
 
+    def test_travel_maps_to_teal(self) -> None:
+        assert tile_color(_entry(WorkLocation.TRAVEL)) == ft.Colors.TEAL_700
+
     def test_unlogged_maps_to_surface_container(self) -> None:
         assert tile_color(None) == ft.Colors.SURFACE_CONTAINER_HIGHEST
 

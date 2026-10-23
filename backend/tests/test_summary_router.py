@@ -116,9 +116,10 @@ class TestMonthlySummary:
             session,
             [
                 (date(2025, 6, 2), "denmark"),
-                (date(2025, 6, 3), "vacation"),
-                (date(2025, 6, 4), "sick"),
-                (date(2025, 6, 5), "home"),
+                (date(2025, 6, 3), "travel"),
+                (date(2025, 6, 4), "vacation"),
+                (date(2025, 6, 5), "sick"),
+                (date(2025, 6, 6), "home"),
             ],
         )
 
@@ -130,13 +131,14 @@ class TestMonthlySummary:
         data = response.json()
         assert data["year"] == 2025
         assert data["month"] == 6
-        assert data["total_days"] == 4
+        assert data["total_days"] == 5
         assert data["denmark_days"] == 1
+        assert data["travel_days"] == 1
         assert data["vacation_days"] == 1
         assert data["sick_days"] == 1
         assert data["home_days"] == 1
-        # 3 of 4 compliant days -> 75%
-        assert data["compliance_pct"] == 75.0
+        # 4 of 5 compliant days -> 80%
+        assert data["compliance_pct"] == 80.0
         assert data["is_compliant"] is True
 
     async def test_no_entries_returns_zeroed_non_compliant_summary(
