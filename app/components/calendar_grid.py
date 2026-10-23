@@ -234,7 +234,7 @@ def build_calendar_grid(
     # (Requirement 4.2).
     return ft.GridView(
         controls=controls,
-        max_extent=cell_edge + _SPACING,
+        runs_count=_COLUMNS,
         child_aspect_ratio=1.0,
         spacing=_SPACING,
         run_spacing=_SPACING,

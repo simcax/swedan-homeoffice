@@ -112,6 +112,9 @@ _FALLBACK_PAGE_HEIGHT = 600.0
 # some platform the final row is always reachable.
 _VERTICAL_CHROME = 532.0
 
+# Outer Container horizontal padding (16 left + 16 right) around the calendar.
+_HORIZONTAL_CHROME = 32.0
+
 
 def _available_grid_size(page: ft.Page) -> tuple[float, float]:
     """Estimate the width/height (logical px) available to the calendar grid.
@@ -127,7 +130,7 @@ def _available_grid_size(page: ft.Page) -> tuple[float, float]:
     width = page.width if page.width is not None else _FALLBACK_PAGE_WIDTH
     height = page.height if page.height is not None else _FALLBACK_PAGE_HEIGHT
 
-    avail_w = max(0.0, float(width))
+    avail_w = max(0.0, float(width) - _HORIZONTAL_CHROME)
     avail_h = max(0.0, float(height) - _VERTICAL_CHROME)
     return avail_w, avail_h
 
