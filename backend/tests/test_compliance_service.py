@@ -116,24 +116,40 @@ class TestCalculateMonthly:
         assert result.compliance_pct == 50.0
         assert result.is_compliant is True
 
-    def test_mixed_compliant_locations_all_count_together(self) -> None:
+    def test_travel_counts_as_compliant_like_denmark(self) -> None:
         svc = ComplianceService()
         entries = [
-            _entry(date(2025, 6, 2), "denmark"),
-            _entry(date(2025, 6, 3), "vacation"),
-            _entry(date(2025, 6, 4), "sick"),
-            _entry(date(2025, 6, 5), "home"),
+            _entry(date(2025, 6, 2), "travel"),
+            _entry(date(2025, 6, 3), "home"),
         ]
 
         result = svc.calculate_monthly(entries)
 
-        assert result.total_days == 4
+        assert result.total_days == 2
+        assert result.travel_days == 1
+        assert result.compliance_pct == 50.0
+        assert result.is_compliant is True
+
+    def test_mixed_compliant_locations_all_count_together(self) -> None:
+        svc = ComplianceService()
+        entries = [
+            _entry(date(2025, 6, 2), "denmark"),
+            _entry(date(2025, 6, 3), "travel"),
+            _entry(date(2025, 6, 4), "vacation"),
+            _entry(date(2025, 6, 5), "sick"),
+            _entry(date(2025, 6, 6), "home"),
+        ]
+
+        result = svc.calculate_monthly(entries)
+
+        assert result.total_days == 5
         assert result.denmark_days == 1
+        assert result.travel_days == 1
         assert result.vacation_days == 1
         assert result.sick_days == 1
         assert result.home_days == 1
-        # 3 of 4 compliant days -> 75%
-        assert result.compliance_pct == 75.0
+        # 4 of 5 compliant days -> 80%
+        assert result.compliance_pct == 80.0
         assert result.is_compliant is True
 
 
@@ -209,6 +225,7 @@ class TestCalculateAnnual:
             _entry(date(2025, 3, 5), "vacation"),
             _entry(date(2025, 6, 15), "sick"),
             _entry(date(2025, 6, 16), "denmark"),
+            _entry(date(2025, 6, 17), "travel"),
             _entry(date(2025, 12, 31), "home"),
         ]
 
@@ -217,6 +234,9 @@ class TestCalculateAnnual:
         assert result.total_days == sum(s.total_days for s in result.monthly_breakdown)
         assert result.denmark_days == sum(
             s.denmark_days for s in result.monthly_breakdown
+        )
+        assert result.travel_days == sum(
+            s.travel_days for s in result.monthly_breakdown
         )
         assert result.vacation_days == sum(
             s.vacation_days for s in result.monthly_breakdown

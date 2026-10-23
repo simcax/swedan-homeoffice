@@ -21,6 +21,7 @@ class TestWorkLocation:
     def test_valid_values_accepted(self):
         assert WorkLocation("home") is WorkLocation.HOME
         assert WorkLocation("denmark") is WorkLocation.DENMARK
+        assert WorkLocation("travel") is WorkLocation.TRAVEL
         assert WorkLocation("vacation") is WorkLocation.VACATION
         assert WorkLocation("sick") is WorkLocation.SICK
 

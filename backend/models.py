@@ -21,6 +21,7 @@ class WorkEntry(Base):
         Enum(
             "home",
             "denmark",
+            "travel",
             "vacation",
             "sick",
             name="work_location_enum",

@@ -4,9 +4,10 @@
 ``WorkEntry`` records and computes :class:`ComplianceSummary` /
 :class:`AnnualSummary` values. It has no database dependency.
 
-A **compliant day** is any day logged as ``denmark``, ``vacation`` or ``sick``;
-those days count toward the 50 % Denmark-presence requirement. ``home`` days do
-not. A summary ``is_compliant`` when its ``compliance_pct >= 50.0``.
+A **compliant day** is any day logged as ``denmark``, ``travel``, ``vacation``
+or ``sick``; those days count toward the 50 % Denmark-presence requirement.
+``home`` days do not. A summary ``is_compliant`` when its
+``compliance_pct >= 50.0``.
 
 Requirements: 6.3, 6.4, 6.5, 6.6, 7.2, 7.3, 7.4, 7.5
 """
@@ -33,8 +34,8 @@ class ComplianceService:
 
         Follows the ``calculate_compliance`` pseudocode: count locations with a
         loop maintaining the invariant
-        ``denmark + vacation + sick + home == entries_processed`` and derive the
-        compliance percentage.
+        ``denmark + travel + vacation + sick + home == entries_processed`` and
+        derive the compliance percentage.
 
         ``compliance_pct`` is ``0.0`` when there are no entries. The summary's
         ``year``/``month`` labels come from the explicit ``year``/``month``
@@ -45,6 +46,7 @@ class ComplianceService:
         """
         total = len(entries)
         denmark = 0
+        travel = 0
         vacation = 0
         sick = 0
         home = 0
@@ -53,6 +55,8 @@ class ComplianceService:
             # Loop invariant: counts sum to the number of entries processed.
             if entry.location == "denmark":
                 denmark += 1
+            elif entry.location == "travel":
+                travel += 1
             elif entry.location == "vacation":
                 vacation += 1
             elif entry.location == "sick":
@@ -60,7 +64,7 @@ class ComplianceService:
             elif entry.location == "home":
                 home += 1
 
-        compliant = denmark + vacation + sick
+        compliant = denmark + travel + vacation + sick
         pct = (compliant / total) * 100.0 if total > 0 else 0.0
 
         # Explicit period labels win; otherwise infer from entries, then 0.
@@ -74,6 +78,7 @@ class ComplianceService:
             month=month,
             total_days=total,
             denmark_days=denmark,
+            travel_days=travel,
             vacation_days=vacation,
             sick_days=sick,
             home_days=home,
@@ -117,17 +122,19 @@ class ComplianceService:
 
         total = sum(s.total_days for s in monthly_breakdown)
         denmark = sum(s.denmark_days for s in monthly_breakdown)
+        travel = sum(s.travel_days for s in monthly_breakdown)
         vacation = sum(s.vacation_days for s in monthly_breakdown)
         sick = sum(s.sick_days for s in monthly_breakdown)
         home = sum(s.home_days for s in monthly_breakdown)
 
-        compliant = denmark + vacation + sick
+        compliant = denmark + travel + vacation + sick
         pct = round((compliant / total) * 100.0, 2) if total > 0 else 0.0
 
         return AnnualSummary(
             year=year,
             total_days=total,
             denmark_days=denmark,
+            travel_days=travel,
             vacation_days=vacation,
             sick_days=sick,
             home_days=home,

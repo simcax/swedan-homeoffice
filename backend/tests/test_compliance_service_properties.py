@@ -30,7 +30,7 @@ _FIXED_DATE = date(2025, 1, 1)
 # exploring the full partition space (all-zero through mixed populations).
 _count = st.integers(min_value=0, max_value=100)
 
-# All four location enum values, used to generate arbitrary entry lists.
+# All five location enum values, used to generate arbitrary entry lists.
 _locations = st.sampled_from([loc.value for loc in WorkLocation])
 
 
@@ -40,11 +40,12 @@ def _entry(location: str, work_date: date = _FIXED_DATE) -> WorkEntry:
 
 
 def _build_entries(
-    denmark: int, vacation: int, sick: int, home: int
+    denmark: int, travel: int, vacation: int, sick: int, home: int
 ) -> list[WorkEntry]:
     """Build an entry list with the requested count of each location type."""
     return (
         [_entry("denmark") for _ in range(denmark)]
+        + [_entry("travel") for _ in range(travel)]
         + [_entry("vacation") for _ in range(vacation)]
         + [_entry("sick") for _ in range(sick)]
         + [_entry("home") for _ in range(home)]
@@ -60,24 +61,25 @@ _entry_lists = st.lists(
 
 
 class TestCompliancePartitionProperty:
-    @given(denmark=_count, vacation=_count, sick=_count, home=_count)
+    @given(denmark=_count, travel=_count, vacation=_count, sick=_count, home=_count)
     @settings(max_examples=100, deadline=None)
     def test_location_counts_partition_total(
-        self, denmark: int, vacation: int, sick: int, home: int
+        self, denmark: int, travel: int, vacation: int, sick: int, home: int
     ) -> None:
         """**Validates: Requirements 6.6, 7.3**
 
         Property 3: Compliance Partition
         For arbitrary non-negative counts of each location type, the returned
         summary always satisfies
-        ``denmark_days + vacation_days + sick_days + home_days == total_days ==
-        len(entries)``.
+        ``denmark_days + travel_days + vacation_days + sick_days + home_days
+        == total_days == len(entries)``.
         """
-        entries = _build_entries(denmark, vacation, sick, home)
+        entries = _build_entries(denmark, travel, vacation, sick, home)
         result = ComplianceService().calculate_monthly(entries)
 
         partition_sum = (
             result.denmark_days
+            + result.travel_days
             + result.vacation_days
             + result.sick_days
             + result.home_days
@@ -96,11 +98,17 @@ class TestCompliancePercentageFormulaProperty:
 
         Property 4: Compliance Percentage Formula
         For any non-empty entry list, ``compliance_pct`` equals
-        ``((denmark_days + vacation_days + sick_days) / total_days) * 100.0``.
+        ``((denmark_days + travel_days + vacation_days + sick_days) /
+        total_days) * 100.0``.
         """
         result = ComplianceService().calculate_monthly(entries)
 
-        compliant = result.denmark_days + result.vacation_days + result.sick_days
+        compliant = (
+            result.denmark_days
+            + result.travel_days
+            + result.vacation_days
+            + result.sick_days
+        )
         expected_pct = (compliant / result.total_days) * 100.0
         assert math.isclose(result.compliance_pct, expected_pct, rel_tol=1e-9)
 
@@ -142,14 +150,15 @@ class TestVacationSickComplianceEquivalenceProperty:
     ) -> None:
         """**Validates: Requirements 6.3, 6.4, 13.3, 14.3**
 
-        Property 11: Vacation/Sick Compliance Equivalence
-        Replacing every ``vacation``/``sick`` entry with a ``denmark`` entry
-        (leaving ``home`` untouched) leaves ``compliance_pct`` and
+        Property 11: Compliant Location Equivalence
+        Replacing every ``travel``/``vacation``/``sick`` entry with a
+        ``denmark`` entry (leaving ``home`` untouched) leaves
+        ``compliance_pct`` and
         ``is_compliant`` unchanged, because all three count as compliant days.
         """
         substituted = [
             _entry("denmark", e.work_date)
-            if e.location in ("vacation", "sick")
+            if e.location in ("travel", "vacation", "sick")
             else _entry(e.location, e.work_date)
             for e in entries
         ]

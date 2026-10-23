@@ -1,10 +1,11 @@
 """Day-type picker dialog for the monthly calendar grid.
 
 Tapping any past-or-today calendar day opens an :class:`ft.AlertDialog` that
-offers the four existing :class:`WorkLocation` choices (Denmark / Home /
-Vacation / Sick) plus a Clear action. Future dates never open the picker; the
-pure :func:`can_open_picker` gate decides eligibility before the dialog is ever
-built, so the view layer can short-circuit a tap on a future day.
+offers the five existing :class:`WorkLocation` choices (Denmark / Home /
+Work Travel / Vacation / Sick) plus a Clear action. Future dates never open
+the picker; the pure :func:`can_open_picker` gate decides eligibility before
+the dialog is ever built, so the view layer can short-circuit a tap on a future
+day.
 
 The builder is a pure function returning an :class:`ft.AlertDialog`; it never
 starts the Flet runtime and performs no I/O. The upsert / clear coroutines that
@@ -32,18 +33,20 @@ from app.api_client import APIClient, APIError, WorkEntry, WorkLocation
 from app.components.entry_tile import _LOCATION_COLORS
 from app.state import AppState
 
-# Human-readable labels for the four location choices (Requirement 1.2).
+# Human-readable labels for the five location choices (Requirement 1.2).
 PICKER_LABELS: dict[WorkLocation, str] = {
     WorkLocation.DENMARK: "Office / Denmark",
     WorkLocation.HOME: "Work from Home",
+    WorkLocation.TRAVEL: "Work Travel",
     WorkLocation.VACATION: "Vacation",
     WorkLocation.SICK: "Sick Day",
 }
 
-# Order the four choices are rendered in.
+# Order the five choices are rendered in.
 _PICKER_ORDER: tuple[WorkLocation, ...] = (
     WorkLocation.DENMARK,
     WorkLocation.HOME,
+    WorkLocation.TRAVEL,
     WorkLocation.VACATION,
     WorkLocation.SICK,
 )
@@ -119,7 +122,7 @@ def build_day_type_picker(
 ) -> ft.AlertDialog:
     """Build the day-type picker dialog for ``work_date``.
 
-    The dialog presents the four :class:`WorkLocation` choices plus a Clear
+    The dialog presents the five :class:`WorkLocation` choices plus a Clear
     action and a Cancel action. When ``current`` is not ``None`` the option
     whose location matches ``current.location`` is marked as the currently
     recorded choice, and no other option is marked (Requirement 1.3).
