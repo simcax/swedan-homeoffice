@@ -96,6 +96,26 @@ them yourself: `set -a; source .env; set +a`.
 | `DATABASE_URL` | Backend PostgreSQL connection string | `postgresql://wlt:wlt@127.0.0.1:5432/wlt` |
 | `API_BASE_URL` | URL the Flet app targets | `http://127.0.0.1:8080` |
 
+## Automating "work at office" check-ins
+
+Use the authenticated check-in endpoint to create or update ("upsert") one day
+as office work (`denmark` in the API model):
+
+- **Endpoint:** `POST /api/v1/checkin`
+- **Authentication:** `X-API-Key` header must match `APP_SHARED_SECRET`
+- **Body:** none required
+- **Query params (optional):**
+  - `location` (defaults to `denmark`)
+  - `date` as `YYYY-MM-DD` (defaults to today's Copenhagen local date)
+
+Example request:
+
+```bash
+curl -X POST "https://your-backend.example.com/api/v1/checkin?location=denmark&date=2026-10-26" \
+  -H "X-API-Key: ${APP_SHARED_SECRET}" \
+  -H "Accept: application/json"
+```
+
 ## CI/CD
 
 Two GitHub Actions workflows drive continuous integration and deployment:
