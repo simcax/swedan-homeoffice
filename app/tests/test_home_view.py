@@ -132,6 +132,22 @@ class TestLogEntrySuccess:
         assert state.compliance_summary is summary
         client.get_summary.assert_awaited_once_with(2025, 6)
 
+    async def test_entry_outside_selected_month_not_applied(self) -> None:
+        state = _state(month=5)
+        client = MagicMock()
+        client.post_entry = AsyncMock(return_value=_entry(10, WorkLocation.HOME))
+        client.get_summary = AsyncMock(return_value=_summary())
+        client.get_annual_summary = AsyncMock(return_value=_annual())
+
+        ok = await log_entry(
+            state, client, WorkLocation.HOME, work_date=date(2025, 6, 10)
+        )
+
+        assert ok is True
+        assert state.entries == {}
+        assert state.compliance_summary is None
+        client.get_summary.assert_not_awaited()
+
     async def test_posts_today_when_no_date_given(self) -> None:
         state = _state()
         today = date.today()  # noqa: DTZ011
