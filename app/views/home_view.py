@@ -366,7 +366,9 @@ async def log_entry(
 ) -> bool:
     """Log ``location`` for ``work_date`` (defaults to today) and update state.
 
-    On success the new entry is applied to ``state.entries``, the compliance
+    On success the new entry is applied to ``state.entries`` (only when its
+    date falls within ``state.selected_month``; otherwise the viewed month is
+    left untouched), the compliance
     summary for the selected month is refreshed, the annual summary is refreshed
     best-effort (Fix 2), and any previous error is cleared; the method returns
     ``True``.
@@ -404,9 +406,18 @@ async def log_entry(
     if guard.is_stale(state):
         return False
 
+    state.clear_error()
+
+    # The entry was saved, but if it falls outside the viewed month it must not
+    # be mixed into that month's calendar or summary; only refresh the annual
+    # summary (the viewed month will pick the entry up when it is loaded).
+    selected = state.selected_month
+    if (target.year, target.month) != (selected.year, selected.month):
+        await _refresh_annual(state, api_client, generation=generation)
+        return True
+
     # Success: apply the entry and refresh the compliance indicator.
     state.apply_entry(entry)
-    state.clear_error()
 
     try:
         summary = await api_client.get_summary(
