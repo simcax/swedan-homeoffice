@@ -331,6 +331,11 @@ class TestBuildHomeView:
         view = build_home_view(MagicMock(spec=ft.Page), _state(), MagicMock())
         assert isinstance(view, ft.Container)
 
+    def test_home_content_scrolls_vertically_when_needed(self) -> None:
+        view = build_home_view(MagicMock(spec=ft.Page), _state(), MagicMock())
+        assert isinstance(view.content, ft.Column)
+        assert view.content.scroll == ft.ScrollMode.AUTO
+
     def test_has_no_quick_log_buttons(self) -> None:
         # Requirement 3.1: the home view renders without the quick-log buttons.
         view = build_home_view(MagicMock(spec=ft.Page), _state(), MagicMock())

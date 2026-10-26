@@ -780,6 +780,7 @@ def build_home_view(
             ],
             spacing=16,
             expand=True,
+            scroll=ft.ScrollMode.AUTO,
         ),
         padding=16,
         expand=True,
