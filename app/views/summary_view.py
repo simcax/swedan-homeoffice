@@ -132,7 +132,10 @@ def build_annual_table(annual: AnnualSummary | None) -> ft.Control:
                 f"Annual summary {annual.year}", weight=ft.FontWeight.BOLD, size=18
             ),
             ft.Text(f"Compliance: {annual.compliance_pct:.1f}%"),
-            table,
+            ft.Row(
+                controls=[table],
+                scroll=ft.ScrollMode.AUTO,
+            ),
         ],
         spacing=8,
     )
