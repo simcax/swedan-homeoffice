@@ -172,6 +172,15 @@ class TestBuildAnnualTable:
         control = build_annual_table(_annual())
         assert any(isinstance(c, ft.DataTable) for c in _flatten(control))
 
+    def test_data_table_is_horizontally_scrollable(self) -> None:
+        control = build_annual_table(_annual())
+        scroll_row = next(
+            c
+            for c in _flatten(control)
+            if isinstance(c, ft.Row) and c.scroll == ft.ScrollMode.AUTO
+        )
+        assert any(isinstance(c, ft.DataTable) for c in _flatten(scroll_row))
+
     def test_has_twelve_month_rows_plus_totals(self) -> None:
         control = build_annual_table(_annual())
         table = next(c for c in _flatten(control) if isinstance(c, ft.DataTable))
