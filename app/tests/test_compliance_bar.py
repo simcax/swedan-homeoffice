@@ -14,7 +14,12 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from app.api_client import ComplianceSummary
-from app.components.compliance_bar import build_compliance_bar
+from app.components.compliance_bar import (
+    COMPLIANCE_THRESHOLD,
+    build_compliance_bar,
+    build_compliance_indicator,
+    days_balance,
+)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -26,16 +31,22 @@ def _summary(
     compliance_pct: float,
     is_compliant: bool,
     total_days: int = 10,
+    denmark_days: int | None = None,
+    travel_days: int = 0,
+    vacation_days: int = 0,
+    sick_days: int = 0,
+    home_days: int = 0,
 ) -> ComplianceSummary:
     """Build a ``ComplianceSummary`` with the fields the bar reads."""
     return ComplianceSummary(
         year=2025,
         month=6,
         total_days=total_days,
-        denmark_days=total_days,
-        vacation_days=0,
-        sick_days=0,
-        home_days=0,
+        denmark_days=total_days if denmark_days is None else denmark_days,
+        travel_days=travel_days,
+        vacation_days=vacation_days,
+        sick_days=sick_days,
+        home_days=home_days,
         compliance_pct=compliance_pct,
         is_compliant=is_compliant,
     )
@@ -92,6 +103,58 @@ def test_full_compliance_bar() -> None:
     bar = build_compliance_bar(_summary(compliance_pct=100.0, is_compliant=True))
     assert bar.value == 1.0
     assert bar.color == ft.Colors.GREEN_600
+
+
+def test_indicator_uses_backend_compliance_threshold() -> None:
+    summary = _summary(compliance_pct=57.9, is_compliant=True)
+
+    indicator = build_compliance_indicator(summary)
+
+    assert COMPLIANCE_THRESHOLD == 50.0
+    assert indicator.controls[0].value == 1.0
+
+
+def test_days_balance_counts_vacation_and_displays_surplus() -> None:
+    summary = _summary(
+        compliance_pct=57.9,
+        is_compliant=True,
+        total_days=19,
+        denmark_days=8,
+        vacation_days=3,
+        home_days=8,
+    )
+
+    indicator = build_compliance_indicator(summary)
+
+    assert days_balance(summary) == -3
+    caption = indicator.controls[1].content.controls[1].value
+    assert caption == "-3 day(s) (surplus)"
+
+
+def test_indicator_displays_missing_days_and_at_target() -> None:
+    missing = _summary(
+        compliance_pct=42.1,
+        is_compliant=False,
+        total_days=19,
+        denmark_days=8,
+        home_days=11,
+    )
+    at_target = _summary(
+        compliance_pct=50.0,
+        is_compliant=True,
+        denmark_days=5,
+        home_days=5,
+    )
+
+    missing_caption = (
+        build_compliance_indicator(missing).controls[1].content.controls[1]
+    )
+    target_caption = (
+        build_compliance_indicator(at_target).controls[1].content.controls[1]
+    )
+
+    assert missing_caption.value == "3 day(s) missing"
+    assert target_caption.value == "At target"
 
 
 def test_value_clamped_above_100() -> None:
