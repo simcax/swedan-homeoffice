@@ -12,7 +12,7 @@ Provides two control builders plus the pure derivations they share:
   ``ft.ProgressBar`` and is retained for the summary cards.
 
 The pure helpers (:func:`fill_fraction`, :func:`display_percent`,
-:func:`days_missing`) derive everything from the fields already on
+:func:`days_balance`) derive everything from the fields already on
 :class:`ComplianceSummary`, so no backend request or new field is needed.
 
 This module contains pure control-builder logic only; it never starts the
@@ -23,16 +23,12 @@ Requirements: 1.1, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4
 
 from __future__ import annotations
 
-import math
-
 import flet as ft
 
 from app.api_client import ComplianceSummary
 
-# The compliance percentage at which a month is considered compliant. Pinned
-# frontend-side because no backend field supplies a required-days target. It
-# represents 100% of the circular indicator's fill (Requirements 1.1, 1.2, 2.1).
-COMPLIANCE_THRESHOLD: float = 60.0
+# The backend compliance threshold; it represents 100% of the ring's fill.
+COMPLIANCE_THRESHOLD: float = 50.0
 
 # Theme-aware colours for the circular indicator's ring.
 _COMPLIANT_COLOR = ft.Colors.GREEN_600
@@ -66,25 +62,20 @@ def display_percent(summary: ComplianceSummary) -> int:
     return max(1, min(100, raw))
 
 
-def days_missing(summary: ComplianceSummary) -> int:
-    """Office/Denmark days still needed to reach the threshold.
+def days_balance(summary: ComplianceSummary) -> int:
+    """Signed balance of home days against days that count toward compliance.
 
-    Derived only from fields already on :class:`ComplianceSummary`
-    (``compliance_pct``, ``denmark_days``, ``total_days``) with no backend
-    request or new field. When the month is already compliant the result is 0;
-    otherwise the real-valued shortfall is rounded UP so any partial remaining
-    day counts as one whole day. A ``total_days`` of 0 yields ``required == 0``
-    and therefore a result of 0 rather than raising.
-
-    Requirements: 2.1, 2.2, 2.3, 2.4
+    A positive result is the number of days needed to reach 50%; a negative
+    result is the number of surplus compliant days. Vacation, sick, and travel
+    days count as compliant in the same way as Denmark days.
     """
-    if summary.compliance_pct >= COMPLIANCE_THRESHOLD:
-        return 0
-
-    # required = ceil(threshold/100 * total_days); shortfall floored at 0.
-    required = math.ceil((COMPLIANCE_THRESHOLD / 100.0) * summary.total_days)
-    shortfall = required - summary.denmark_days
-    return max(0, shortfall)
+    compliant_days = (
+        summary.denmark_days
+        + summary.travel_days
+        + summary.vacation_days
+        + summary.sick_days
+    )
+    return summary.home_days - compliant_days
 
 
 def build_compliance_bar(summary: ComplianceSummary | None) -> ft.ProgressBar:
@@ -117,9 +108,9 @@ def build_compliance_indicator(summary: ComplianceSummary | None) -> ft.Stack:
 
     Returns an :class:`ft.Stack` layering a circular :class:`ft.ProgressRing`
     under a centred :class:`ft.Column` that shows the fill percent and a
-    days-missing caption. The ring fill comes from :func:`fill_fraction`, the
+    days-balance caption. The ring fill comes from :func:`fill_fraction`, the
     centre label from :func:`display_percent`, and the caption from
-    :func:`days_missing`. The ring is green when the month is compliant and red
+    :func:`days_balance`. The ring is green when the month is compliant and red
     otherwise.
 
     Args:
@@ -129,7 +120,7 @@ def build_compliance_indicator(summary: ComplianceSummary | None) -> ft.Stack:
     Returns:
         A configured :class:`ft.Stack`. When ``summary`` is ``None`` the stack
         holds a single neutral, empty ring (``value=0``, the theme-aware
-        ``ft.Colors.SURFACE`` colour) with no centre label and no days-missing
+        ``ft.Colors.SURFACE`` colour) with no centre label and no day-balance
         caption (Requirement 1.4).
 
     Requirements: 1.1, 1.4, 1.5
@@ -155,8 +146,13 @@ def build_compliance_indicator(summary: ComplianceSummary | None) -> ft.Stack:
         height=_INDICATOR_SIZE,
     )
 
-    missing = days_missing(summary)
-    caption = "Compliant" if missing == 0 else f"{missing} day(s) to go"
+    balance = days_balance(summary)
+    if balance > 0:
+        caption = f"{balance} day(s) missing"
+    elif balance < 0:
+        caption = f"{balance} day(s) (surplus)"
+    else:
+        caption = "At target"
     label = ft.Column(
         controls=[
             ft.Text(f"{display_percent(summary)}%", weight=ft.FontWeight.BOLD),
