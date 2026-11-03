@@ -63,7 +63,10 @@ from app.components.calendar_grid import (
     fit_cell_edge,
     row_count,
 )
-from app.components.compliance_bar import build_compliance_indicator
+from app.components.compliance_bar import (
+    build_compliance_indicator,
+    build_day_type_bar,
+)
 from app.components.day_type_picker import (
     _PICKER_ORDER,
     PICKER_LABELS,
@@ -657,6 +660,7 @@ def build_home_view(
         content=build_compliance_indicator(state.compliance_summary),
         alignment=ft.Alignment.CENTER,
     )
+    day_type_holder = ft.Container(content=build_day_type_bar(state.compliance_summary))
     error_text = ft.Text(
         state.error_message or "",
         color=ft.Colors.RED_700,
@@ -693,6 +697,7 @@ def build_home_view(
     def _refresh() -> None:
         """Rebuild every stateful control from ``state`` and repaint."""
         compliance_holder.content = build_compliance_indicator(state.compliance_summary)
+        day_type_holder.content = build_day_type_bar(state.compliance_summary)
 
         # The inline error text only carries INLINE (422) validation messages;
         # banners, toasts and notifications use their own surfaces so they do
@@ -773,6 +778,7 @@ def build_home_view(
         content=ft.Column(
             controls=[
                 compliance_holder,
+                day_type_holder,
                 error_text,
                 nav_row,
                 weekday_header,

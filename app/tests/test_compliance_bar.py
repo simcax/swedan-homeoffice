@@ -215,3 +215,40 @@ def test_color_follows_is_compliant(compliance_pct: float, is_compliant: bool) -
     )
     expected = ft.Colors.GREEN_600 if is_compliant else ft.Colors.RED_700
     assert bar.color == expected
+
+
+# ---------------------------------------------------------------------------
+# build_day_type_bar
+# ---------------------------------------------------------------------------
+
+
+def test_day_type_bar_empty_is_neutral() -> None:
+    from app.components.compliance_bar import build_day_type_bar
+
+    assert isinstance(build_day_type_bar(None), ft.Container)
+
+
+def test_day_type_bar_segments_proportional_to_counts() -> None:
+    from app.components.compliance_bar import build_day_type_bar
+
+    s = _summary(
+        compliance_pct=60.0,
+        is_compliant=True,
+        total_days=10,
+        denmark_days=6,
+        vacation_days=1,
+        home_days=3,
+    )
+    bar = build_day_type_bar(s)
+    assert isinstance(bar, ft.Row)
+    assert [c.expand for c in bar.controls] == [6, 1, 3]
+
+
+def test_day_type_bar_large_has_legend() -> None:
+    from app.components.compliance_bar import build_day_type_bar
+
+    s = _summary(
+        compliance_pct=60.0, is_compliant=True, total_days=10, denmark_days=6,
+        home_days=4,
+    )
+    assert isinstance(build_day_type_bar(s, large=True), ft.Column)
