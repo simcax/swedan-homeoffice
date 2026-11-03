@@ -26,7 +26,7 @@ import calendar
 import flet as ft
 
 from app.api_client import AnnualSummary, ComplianceSummary
-from app.components.compliance_bar import build_compliance_bar
+from app.components.compliance_bar import build_compliance_bar, build_day_type_bar
 
 # Column headers for the annual breakdown table (Requirement 7.1).
 _ANNUAL_COLUMNS: tuple[str, ...] = (
@@ -73,6 +73,7 @@ def build_monthly_card(summary: ComplianceSummary | None) -> ft.Card:
         body = [
             ft.Text(title, weight=ft.FontWeight.BOLD, size=18),
             bar,
+            build_day_type_bar(summary, large=True),
             ft.Text(f"Compliance: {summary.compliance_pct:.1f}%"),
             _stat_row("Total days", summary.total_days),
             _stat_row("Denmark", summary.denmark_days),
@@ -132,6 +133,7 @@ def build_annual_table(annual: AnnualSummary | None) -> ft.Control:
                 f"Annual summary {annual.year}", weight=ft.FontWeight.BOLD, size=18
             ),
             ft.Text(f"Compliance: {annual.compliance_pct:.1f}%"),
+            build_day_type_bar(annual, large=True),
             ft.Row(
                 controls=[table],
                 scroll=ft.ScrollMode.AUTO,

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import flet as ft
 
-from app.api_client import ComplianceSummary
+from app.api_client import AnnualSummary, ComplianceSummary
 
 # The backend compliance threshold; it represents 100% of the ring's fill.
 COMPLIANCE_THRESHOLD: float = 50.0
@@ -172,4 +172,77 @@ def build_compliance_indicator(summary: ComplianceSummary | None) -> ft.Stack:
         controls=[ring, centre],
         width=_INDICATOR_SIZE,
         height=_INDICATOR_SIZE,
+    )
+
+
+# Segment colours match the calendar tiles (see ``entry_tile``).
+_DAY_TYPE_SEGMENTS: tuple[tuple[str, str, str], ...] = (
+    ("denmark_days", "Denmark", ft.Colors.RED_700),
+    ("travel_days", "Travel", ft.Colors.TEAL_700),
+    ("vacation_days", "Vacation", ft.Colors.ORANGE_700),
+    ("sick_days", "Sick", ft.Colors.PURPLE_700),
+    ("home_days", "Home", ft.Colors.BLUE_700),
+)
+
+
+def build_day_type_bar(
+    summary: ComplianceSummary | AnnualSummary | None, large: bool = False
+) -> ft.Control:
+    """Build a stacked bar showing how many days of each type were logged.
+
+    Segment widths are proportional to the day counts (denmark, travel,
+    vacation and sick count toward compliance; home does not). ``large=False``
+    gives a slim bar for the monthly page; ``large=True`` adds day counts inside
+    the segments and a colour legend for the compliance page. With no summary or
+    no logged days a neutral empty bar is returned.
+    """
+    height = 28 if large else 10
+    segments = [
+        (label, color, getattr(summary, field))
+        for field, label, color in _DAY_TYPE_SEGMENTS
+        if summary is not None
+    ]
+    segments = [seg for seg in segments if seg[2] > 0]
+
+    if not segments:
+        bar: ft.Control = ft.Container(
+            height=height, bgcolor=_NEUTRAL_COLOR, border_radius=height / 2
+        )
+        return bar
+
+    pct = round(summary.compliance_pct)
+    cells = [
+        ft.Container(
+            content=ft.Text(f"{count}", size=12, color=ft.Colors.WHITE)
+            if large
+            else None,
+            alignment=ft.Alignment.CENTER,
+            bgcolor=color,
+            expand=count,
+            height=height,
+            tooltip=f"{label}: {count} day(s)",
+        )
+        for label, color, count in segments
+    ]
+    bar = ft.Row(controls=cells, spacing=0)
+    if not large:
+        return bar
+
+    legend = ft.Row(
+        controls=[
+            ft.Row(
+                controls=[
+                    ft.Container(width=12, height=12, bgcolor=color, border_radius=2),
+                    ft.Text(f"{label} ({count})", size=12),
+                ],
+                spacing=4,
+            )
+            for label, color, count in segments
+        ],
+        wrap=True,
+        spacing=12,
+    )
+    return ft.Column(
+        controls=[ft.Text(f"Office presence: {pct}%", size=12), bar, legend],
+        spacing=8,
     )
