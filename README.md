@@ -125,19 +125,30 @@ Two GitHub Actions workflows drive continuous integration and deployment:
   service container), and `build` (`uv build`).
 - **`.github/workflows/deploy.yml`** — runs after CI succeeds on `main` and deploys
   to Clever Cloud via `clever deploy`.
+- **`.github/workflows/review-deploy.yml`** — provisions an isolated Clever Cloud
+  app and PostgreSQL add-on for same-repository pull requests, then posts its
+  review URL on the PR. The app name and URL include the PR number.
+- **`.github/workflows/review-cleanup.yml`** — removes the PR app and database
+  when the pull request closes.
 
 ### Required repository secrets
 
-The deploy workflow needs Clever Cloud credentials stored as encrypted GitHub
-secrets. Obtain them by running `clever login` locally, then set them once:
+The deploy and review workflows need Clever Cloud credentials stored as encrypted
+GitHub secrets. The review workflow also needs `APP_SHARED_SECRET`, the secret used
+by the backend API. Set them in the repository:
 
 ```bash
 gh secret set CLEVER_TOKEN
 gh secret set CLEVER_SECRET
+gh secret set APP_SHARED_SECRET
 ```
 
-These values are read from `~/.config/clever-cloud/clever-tools.json` after login.
-Never commit them to the repository.
+`CLEVER_TOKEN` and `CLEVER_SECRET` are read from
+`~/.config/clever-cloud/clever-tools.json` after login. Choose a strong
+`APP_SHARED_SECRET` and share it with reviewers through a secure channel. Never
+commit these values to the repository. Review deployments are limited to
+same-repository pull requests because GitHub does not expose repository secrets to
+workflows triggered by forks.
 
 ## Deployment (Clever Cloud)
 
