@@ -1,0 +1,139 @@
+name: Review deployment
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: review-deploy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy PR review app
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout pull request
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install clever-tools
+        run: npm install -g clever-tools
+
+      - name: Validate review secret
+        env:
+          APP_SHARED_SECRET: ${{ secrets.APP_SHARED_SECRET }}
+        run: |
+          if [ -z "$APP_SHARED_SECRET" ]; then
+            echo "::error::Set the APP_SHARED_SECRET repository secret for review deployments."
+            exit 1
+          fi
+
+      - name: Provision and deploy review app
+        id: deploy
+        env:
+          CLEVER_TOKEN: ${{ secrets.CLEVER_TOKEN }}
+          CLEVER_SECRET: ${{ secrets.CLEVER_SECRET }}
+          APP_SHARED_SECRET: ${{ secrets.APP_SHARED_SECRET }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          app_name="swedan-homeoffice-pr-${PR_NUMBER}"
+          addon_name="${app_name}-db"
+          org_id="$(jq -r '.apps[0].org_id' .clever.json)"
+
+          apps_json="$(clever applications list --format json --org "$org_id")"
+          if echo "$apps_json" | jq -e --arg name "$app_name" \
+            'any(.. | objects; .name? == $name)' >/dev/null; then
+            clever link "$app_name" --org "$org_id"
+          else
+            clever create --type python --region par --org "$org_id" \
+              --alias "$app_name" "$app_name"
+          fi
+          app_id="$(jq -er --arg name "$app_name" \
+            '.apps[] | select(.name == $name or .alias == $name) | .app_id' .clever.json)"
+          clever link "$app_name" --org "$org_id"
+
+          addons_json="$(clever addon list --format json --org "$org_id")"
+          if echo "$addons_json" | jq -e --arg name "$addon_name" \
+            'any(.. | objects; .name? == $name)' >/dev/null; then
+            clever service link-addon "$addon_name" --app "$app_id"
+          else
+            clever addon create postgresql-addon "$addon_name" --plan dev \
+              --region par --org "$org_id" --yes
+            clever service link-addon "$addon_name" --app "$app_id"
+          fi
+
+          preview_host="$(clever domain --app "$app_id" |
+            grep -Eo '[[:alnum:].-]+\.cleverapps\.io' | sed -n '1p')"
+          if [ -z "$preview_host" ]; then
+            echo "::error::Could not determine the Clever Cloud review app domain."
+            exit 1
+          fi
+          preview_url="https://${preview_host}"
+
+          export CC_PYTHON_UV_SYNC_FLAGS="--locked --no-progress"
+          clever env import-vars CC_PYTHON_UV_SYNC_FLAGS --app "$app_id"
+          clever env set CC_PYTHON_UV_RUN_COMMAND \
+            ".venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8080" \
+            --app "$app_id"
+          clever env set CC_PRE_RUN_HOOK "uv run python -m backend.migrate" \
+            --app "$app_id"
+          clever env set SERVE_FRONTEND "true" --app "$app_id"
+          clever env set API_BASE_URL "$preview_url" --app "$app_id"
+          clever env set APP_SHARED_SECRET "$APP_SHARED_SECRET" --app "$app_id"
+          clever deploy
+
+          echo "url=$preview_url" >> "$GITHUB_OUTPUT"
+
+      - name: Add review URL to job summary
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo "## Review deployment"
+            echo
+            echo "PR #${PR_NUMBER}: ${PREVIEW_URL}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment review URL on pull request
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+        with:
+          script: |
+            const marker = '<!-- swedan-homeoffice-review-deployment -->';
+            const body = `${marker}\nReview deployment: ${process.env.PREVIEW_URL}`;
+            const params = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            };
+            const comments = await github.paginate(github.rest.issues.listComments, params);
+            const existing = comments.find(
+              comment => comment.user.type === 'Bot' && comment.body?.includes(marker),
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...params,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({ ...params, body });
+            }

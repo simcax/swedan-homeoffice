@@ -1,0 +1,53 @@
+name: Review deployment cleanup
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Remove PR review app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted repository configuration
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install clever-tools
+        run: npm install -g clever-tools
+
+      - name: Remove review app and database
+        env:
+          CLEVER_TOKEN: ${{ secrets.CLEVER_TOKEN }}
+          CLEVER_SECRET: ${{ secrets.CLEVER_SECRET }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          app_name="swedan-homeoffice-pr-${PR_NUMBER}"
+          addon_name="${app_name}-db"
+          org_id="$(jq -r '.apps[0].org_id' .clever.json)"
+
+          addons_json="$(clever addon list --format json --org "$org_id")"
+          if echo "$addons_json" | jq -e --arg name "$addon_name" \
+            'any(.. | objects; .name? == $name)' >/dev/null; then
+            clever addon delete "$addon_name" --org "$org_id" --yes
+          fi
+
+          apps_json="$(clever applications list --format json --org "$org_id")"
+          if echo "$apps_json" | jq -e --arg name "$app_name" \
+            'any(.. | objects; .name? == $name)' >/dev/null; then
+            clever link "$app_name" --org "$org_id"
+            app_id="$(jq -er --arg name "$app_name" \
+              '.apps[] | select(.name == $name or .alias == $name) | .app_id' .clever.json)"
+            clever delete --app "$app_id" --yes
+          fi
