@@ -66,6 +66,7 @@ jobs:
           fi
           app_id="$(jq -er --arg name "$app_name" \
             '.apps[] | select(.name == $name or .alias == $name) | .app_id' .clever.json)"
+          clever link "$app_name" --org "$org_id"
 
           addons_json="$(clever addon list --format json --org "$org_id")"
           if echo "$addons_json" | jq -e --arg name "$addon_name" \
@@ -95,7 +96,7 @@ jobs:
           clever env set SERVE_FRONTEND "true" --app "$app_id"
           clever env set API_BASE_URL "$preview_url" --app "$app_id"
           clever env set APP_SHARED_SECRET "$APP_SHARED_SECRET" --app "$app_id"
-          clever deploy --app "$app_id"
+          clever deploy
 
           echo "url=$preview_url" >> "$GITHUB_OUTPUT"
 
