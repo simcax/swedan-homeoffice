@@ -85,8 +85,8 @@ jobs:
           fi
           preview_url="https://${preview_host}"
 
-          clever env set CC_PYTHON_UV_SYNC_FLAGS "--locked --no-progress" \
-            --app "$app_id"
+          export CC_PYTHON_UV_SYNC_FLAGS="--locked --no-progress"
+          clever env import-vars CC_PYTHON_UV_SYNC_FLAGS --app "$app_id"
           clever env set CC_PYTHON_UV_RUN_COMMAND \
             ".venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8080" \
             --app "$app_id"
